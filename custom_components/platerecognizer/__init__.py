@@ -17,7 +17,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {**entry.data, **entry.options}
 
-    # image_processing is a legacy platform — must be loaded via platform discovery
+    # image_processing is a legacy platform — must use discovery
     hass.async_create_task(
         discovery.async_load_platform(
             hass,
@@ -28,16 +28,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
     )
 
+    # sensor + image platforms via config entry
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "image"])
+
     entry.async_on_unload(entry.add_update_listener(async_update_options))
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    await hass.config_entries.async_unload_platforms(entry, ["sensor", "image"])
     hass.data[DOMAIN].pop(entry.entry_id, None)
     return True
 
 
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle options update — reload so changes take effect."""
+    """Reload on options change."""
     await hass.config_entries.async_reload(entry.entry_id)
