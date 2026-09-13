@@ -1,6 +1,5 @@
 {
   "name": "PlateRecognizer",
   "homeassistant": "2024.1.0",
-  "domain": "platerecognizer",
   "country": []
 }
