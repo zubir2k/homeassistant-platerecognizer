@@ -1,5 +1,4 @@
-# Plate Recognizer for Home Assistant
-
+![PlateRecognizer](https://github.com/user-attachments/assets/b85edee1-d559-4a58-ab78-b369f0a405a5)
 
 ![GitHub Repo stars](https://img.shields.io/github/stars/zubir2k/homeassistant-platerecognizer?style=social)
 [![hacs_badge](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://github.com/hacs/default)
