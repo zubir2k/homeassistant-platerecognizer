@@ -1,0 +1,189 @@
+"""Config flow for Plate Recognizer integration."""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import aiohttp
+import voluptuous as vol
+
+from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+import homeassistant.helpers.config_validation as cv
+
+from .const import (
+    API_URL_CLOUD,
+    CONF_ALWAYS_SAVE_LATEST,
+    CONF_API_TOKEN,
+    CONF_CAMERA_ENTITY,
+    CONF_DETECTION_RULE,
+    CONF_MMC,
+    CONF_ON_PREMISE,
+    CONF_REGION_MODE,
+    CONF_REGIONS,
+    CONF_SAVE_FILE_FOLDER,
+    CONF_SAVE_TIMESTAMPED,
+    CONF_SERVER,
+    CONF_WATCHED_PLATES,
+    DEFAULT_ALWAYS_SAVE_LATEST,
+    DEFAULT_DETECTION_RULE,
+    DEFAULT_MMC,
+    DEFAULT_ON_PREMISE,
+    DEFAULT_REGION_MODE,
+    DEFAULT_SAVE_TIMESTAMPED,
+    DEFAULT_SERVER,
+    DETECTION_RULES,
+    DOMAIN,
+    REGION_MODES,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _get_camera_entities(hass: HomeAssistant) -> list[str]:
+    """Return a sorted list of camera entity_ids."""
+    registry = er.async_get(hass)
+    entities = [
+        entity.entity_id
+        for entity in registry.entities.values()
+        if entity.domain == CAMERA_DOMAIN
+    ]
+    # Also pick up entities not yet in the registry (directly from states)
+    for state in hass.states.async_all(CAMERA_DOMAIN):
+        if state.entity_id not in entities:
+            entities.append(state.entity_id)
+    return sorted(entities)
+
+
+async def _validate_api_token(
+    hass: HomeAssistant, token: str, on_premise: bool, server: str
+) -> dict[str, str]:
+    """Try a lightweight API call and return errors dict (empty = success)."""
+    session = async_get_clientsession(hass)
+    if on_premise:
+        url = f"{server.rstrip('/')}/info/"
+        headers: dict[str, str] = {}
+    else:
+        url = "https://api.platerecognizer.com/v1/statistics/"
+        headers = {"Authorization": f"Token {token}"}
+
+    try:
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if resp.status == 200:
+                return {}
+            if resp.status in (401, 403):
+                return {"base": "invalid_auth"}
+            return {"base": "cannot_connect"}
+    except aiohttp.ClientConnectorError:
+        return {"base": "cannot_connect"}
+    except Exception:  # noqa: BLE001
+        return {"base": "unknown"}
+
+
+class PlateRecognizerConfigFlow(ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for Plate Recognizer."""
+
+    VERSION = 1
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Step 1 — API credentials and source camera."""
+        errors: dict[str, str] = {}
+        cameras = _get_camera_entities(self.hass)
+
+        if user_input is not None:
+            on_premise = user_input.get(CONF_ON_PREMISE, DEFAULT_ON_PREMISE)
+            server = user_input.get(CONF_SERVER, DEFAULT_SERVER)
+            token = user_input.get(CONF_API_TOKEN, "")
+
+            errors = await _validate_api_token(self.hass, token, on_premise, server)
+
+            if not errors:
+                # Build a human-readable title
+                camera = user_input[CONF_CAMERA_ENTITY]
+                title = f"Plate Recognizer — {camera}"
+                return self.async_create_entry(title=title, data=user_input)
+
+        schema = vol.Schema(
+            {
+                vol.Optional(CONF_ON_PREMISE, default=DEFAULT_ON_PREMISE): bool,
+                vol.Optional(CONF_API_TOKEN, default=""): str,
+                vol.Optional(CONF_SERVER, default=DEFAULT_SERVER): str,
+                vol.Required(CONF_CAMERA_ENTITY): vol.In(cameras) if cameras else str,
+            }
+        )
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={
+                "dashboard_url": "https://app.platerecognizer.com/service/snapshot-cloud/"
+            },
+        )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> PlateRecognizerOptionsFlow:
+        """Return the options flow."""
+        return PlateRecognizerOptionsFlow(config_entry)
+
+
+class PlateRecognizerOptionsFlow(OptionsFlow):
+    """Handle options for Plate Recognizer."""
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Initialise."""
+        self.config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        current = {**self.config_entry.data, **self.config_entry.options}
+
+        schema = vol.Schema(
+            {
+                # --- Detection ---
+                vol.Optional(
+                    CONF_REGIONS, default=current.get(CONF_REGIONS, [])
+                ): str,  # comma-separated in UI, parsed in image_processing
+                vol.Optional(
+                    CONF_WATCHED_PLATES, default=current.get(CONF_WATCHED_PLATES, [])
+                ): str,
+                vol.Optional(
+                    CONF_DETECTION_RULE,
+                    default=current.get(CONF_DETECTION_RULE, DEFAULT_DETECTION_RULE),
+                ): vol.In(DETECTION_RULES),
+                vol.Optional(
+                    CONF_REGION_MODE,
+                    default=current.get(CONF_REGION_MODE, DEFAULT_REGION_MODE),
+                ): vol.In(REGION_MODES),
+                vol.Optional(
+                    CONF_MMC, default=current.get(CONF_MMC, DEFAULT_MMC)
+                ): bool,
+                # --- File saving ---
+                vol.Optional(
+                    CONF_SAVE_FILE_FOLDER,
+                    default=current.get(CONF_SAVE_FILE_FOLDER, ""),
+                ): str,
+                vol.Optional(
+                    CONF_SAVE_TIMESTAMPED,
+                    default=current.get(CONF_SAVE_TIMESTAMPED, DEFAULT_SAVE_TIMESTAMPED),
+                ): bool,
+                vol.Optional(
+                    CONF_ALWAYS_SAVE_LATEST,
+                    default=current.get(CONF_ALWAYS_SAVE_LATEST, DEFAULT_ALWAYS_SAVE_LATEST),
+                ): bool,
+            }
+        )
+
+        return self.async_show_form(step_id="init", data_schema=schema)

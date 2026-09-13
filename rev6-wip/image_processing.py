@@ -10,6 +10,7 @@ import aiohttp
 
 from homeassistant.components.image_processing import ImageProcessingEntity
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -61,46 +62,6 @@ def _parse_list_option(value: Any) -> list[str]:
     return []
 
 
-def _annotate_image(image: bytes, results: list[dict]) -> bytes:
-    """Draw bounding boxes and plate labels onto image using PIL."""
-    try:
-        from PIL import Image, ImageDraw, ImageFont
-        img = Image.open(io.BytesIO(image)).convert("RGB")
-        draw = ImageDraw.Draw(img)
-        try:
-            font = ImageFont.truetype(
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24
-            )
-        except Exception:
-            font = ImageFont.load_default()
-
-        for r in results:
-            box = r.get("box", {})
-            xmin, ymin = box.get("xmin", 0), box.get("ymin", 0)
-            xmax, ymax = box.get("xmax", 0), box.get("ymax", 0)
-            plate = r.get("plate", "").upper()
-            score = r.get("score", 0)
-
-            # Bounding box — thicker line
-            draw.rectangle([xmin, ymin, xmax, ymax], outline="red", width=4)
-
-            # Label background + text above box
-            label = f"{plate} {score:.0%}"
-            bbox = draw.textbbox((xmin, ymin - 28), label, font=font)
-            draw.rectangle(bbox, fill="red")
-            draw.text((xmin, ymin - 28), label, fill="white", font=font)
-
-        out = io.BytesIO()
-        img.save(out, format="JPEG", quality=90)
-        return out.getvalue()
-    except ImportError:
-        _LOGGER.debug("PIL not available — returning unannotated image")
-        return image
-    except Exception as err:
-        _LOGGER.warning("Image annotation failed: %s", err)
-        return image
-
-
 async def async_setup_platform(
     hass: HomeAssistant,
     config: ConfigType,
@@ -120,6 +81,7 @@ class PlateRecognizerEntity(ImageProcessingEntity):
     """Plate Recognizer image processing entity."""
 
     _attr_should_poll = False
+    _attr_has_entity_name = True
 
     def __init__(self, hass: HomeAssistant, entry_id: str, config: dict[str, Any]) -> None:
         self.hass = hass
@@ -145,12 +107,21 @@ class PlateRecognizerEntity(ImageProcessingEntity):
         self._watched_plate_status: dict[str, bool] = {p: False for p in self._watched_plates}
         self._statistics: dict[str, Any] = {}
         self._last_detection: str | None = None
-        self._last_results: list[dict] = []
 
         camera_slug = self._attr_camera_entity.replace("camera.", "")
         self._camera_slug = camera_slug
         self._attr_name = f"platerecognizer_{camera_slug}"
         self._attr_unique_id = f"{DOMAIN}_{entry_id}"
+
+        # Device — groups all entities for this camera together
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry_id)},
+            name=f"Plate Recognizer ({camera_slug})",
+            manufacturer="Plate Recognizer",
+            model="Snapshot Cloud" if not self._on_premise else "On-Premise SDK",
+            entry_type="service",
+            configuration_url="https://app.platerecognizer.com",
+        )
 
     @property
     def camera_entity(self) -> str:
@@ -215,26 +186,14 @@ class PlateRecognizerEntity(ImageProcessingEntity):
             _LOGGER.warning("Could not fetch statistics: %s", err)
 
     def _push_image_to_entity(self, image: bytes) -> None:
-        """Annotate image with bounding boxes and push to image entity."""
         entity = self.hass.data.get(DOMAIN, {}).get(f"image_entity_{self._entry_id}")
-        if entity is None:
-            return
-
-        async def _annotate_and_push() -> None:
-            annotated = await self.hass.async_add_executor_job(
-                _annotate_image, image, self._last_results
-            )
-            entity.update_image(annotated, self._vehicles, dict(self._watched_plate_status))
-
-        self.hass.async_create_task(_annotate_and_push())
+        if entity is not None:
+            entity.update_image(image)
 
     async def async_process_image(self, image: bytes) -> None:
         session = async_get_clientsession(self.hass)
         post_data = aiohttp.FormData()
-        post_data.add_field(
-            "upload", io.BytesIO(image),
-            filename="image.jpg", content_type="image/jpeg",
-        )
+        post_data.add_field("upload", io.BytesIO(image), filename="image.jpg", content_type="image/jpeg")
         post_data.add_field("camera_id", self._attr_camera_entity)
 
         for region in self._regions:
@@ -270,15 +229,12 @@ class PlateRecognizerEntity(ImageProcessingEntity):
         self._push_image_to_entity(image)
 
         if self._save_folder:
-            self.hass.async_create_task(
-                self._async_save_image(image, bool(self._vehicles))
-            )
+            self.hass.async_create_task(self._async_save_image(image, bool(self._vehicles)))
+
         await self._async_fetch_statistics()
 
     def _handle_response(self, payload: dict[str, Any]) -> None:
         results: list[dict] = payload.get("results", [])
-        self._last_results = results
-
         usage = payload.get("usage", {})
         if usage:
             max_calls = usage.get("max_calls", usage.get("total_calls", 0))
@@ -324,12 +280,10 @@ class PlateRecognizerEntity(ImageProcessingEntity):
             self._all_plates.append(plate_str)
             self.hass.bus.fire(EVENT_VEHICLE_DETECTED, {"entity_id": self.entity_id, **vehicle})
 
-        # Update watched plate status (kept in attributes for automation use)
         if self._watched_plates:
             detected_lower = [p.lower() for p in self._all_plates]
             self._watched_plate_status = {
-                wp: wp.lower() in detected_lower or
-                    any(self._fuzzy_match(wp, dp) for dp in detected_lower)
+                wp: wp.lower() in detected_lower or any(self._fuzzy_match(wp, dp) for dp in detected_lower)
                 for wp in self._watched_plates
             }
 

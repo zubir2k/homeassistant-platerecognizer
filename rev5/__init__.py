@@ -6,9 +6,8 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import discovery
-from homeassistant.helpers import entity_registry as er
 
-from .const import CONF_CAMERA_ENTITY, DOMAIN
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,25 +38,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     await hass.config_entries.async_unload_platforms(entry, ["sensor", "image"])
-
-    # Remove the image_processing entity immediately so it doesn't
-    # linger in the state machine after the integration is deleted
-    config = hass.data[DOMAIN].get(entry.entry_id, {})
-    camera_slug = config.get(CONF_CAMERA_ENTITY, "").replace("camera.", "")
-    entity_id = f"image_processing.platerecognizer_{camera_slug}"
-
-    if hass.states.get(entity_id):
-        hass.states.async_remove(entity_id)
-        _LOGGER.debug("Removed state: %s", entity_id)
-
-    registry = er.async_get(hass)
-    if registry.async_get(entity_id):
-        registry.async_remove(entity_id)
-        _LOGGER.debug("Removed registry entry: %s", entity_id)
-
     hass.data[DOMAIN].pop(entry.entry_id, None)
-    hass.data[DOMAIN].pop(f"image_entity_{entry.entry_id}", None)
-
     return True
 
 
