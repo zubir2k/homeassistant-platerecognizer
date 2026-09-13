@@ -53,8 +53,8 @@ vehicles:
     box_y_centre: 234.5
     box_x_centre: 456.2
 watched_plates:
-  NDM204: true
-  VF204: false
+  ABC123: true
+  XYZ456: false
 statistics:
   total_calls: 2500
   calls_used: 320
@@ -77,8 +77,8 @@ vehicles:
     region_code: my
     vehicle_type: Sedan
 watched_plates:
-  NDM204: true
-  VF204: false
+  ABC123: true
+  XYZ456: false
 ```
 
 ### sensor attributes
@@ -213,7 +213,7 @@ trigger:
 condition:
   - condition: template
     value_template: >
-      {{ trigger.event.data.plate in ['NDM204', 'VF204'] }}
+      {{ trigger.event.data.plate in ['ABC123', 'XYZ456'] }}
 action:
   - action: switch.turn_on
     target:
@@ -230,7 +230,7 @@ Every detected vehicle fires a `platerecognizer.vehicle_detected` event:
 event_type: platerecognizer.vehicle_detected
 data:
   entity_id: image_processing.platerecognizer_frontgate
-  plate: NDM204
+  plate: ABC123
   confidence: 1.0
   region_code: my
   vehicle_type: Sedan
@@ -293,7 +293,6 @@ Common codes: `my` (Malaysia), `sg` (Singapore), `gb` (UK), `au` (Australia), `u
 
 - Plate Recognizer API: [platerecognizer.com](https://platerecognizer.com/)
 - Original integration by [@robmarkcole](https://github.com/robmarkcole/HASS-plate-recognizer)
-- Rewritten and maintained by [@zubir2k](https://github.com/zubir2k)
 
 ---
 
