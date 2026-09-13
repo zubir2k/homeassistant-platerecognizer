@@ -123,6 +123,8 @@ For **On-Premise SDK**: enable the toggle, leave the API token blank, and enter 
 
 To add a second camera, click **Add service** on the integration page and repeat the setup.
 
+![Setup](https://github.com/user-attachments/assets/e65c34c6-eede-49e3-a304-d66f64f69a7f)
+
 ---
 
 ## Options
