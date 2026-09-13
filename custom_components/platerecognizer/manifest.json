@@ -1,11 +1,13 @@
 {
-        "domain": "platerecognizer",
-        "name": "platerecognizer custom integration",
-        "documentation": "https://github.com/robmarkcole/HASS-plate-recognizer",
-        "version": "1.0.0",
-        "requirements": ["pillow", "requests"],
-        "dependencies": [],
-        "codeowners": [
-                "@robmarkcole"
-        ]
+  "domain": "platerecognizer",
+  "name": "Plate Recognizer",
+  "version": "2.0.0",
+  "documentation": "https://github.com/zubir2k/homeassistant-platerecognizer",
+  "issue_tracker": "https://github.com/zubir2k/homeassistant-platerecognizer/issues",
+  "dependencies": [],
+  "codeowners": ["@zubir2k"],
+  "requirements": [],
+  "iot_class": "cloud_polling",
+  "config_flow": true,
+  "integration_type": "service"
 }

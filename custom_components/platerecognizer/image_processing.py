@@ -1,334 +1,364 @@
-"""Vehicle detection using Plate Recognizer cloud service."""
-import logging
-import requests
-import voluptuous as vol
-import re
+"""Image processing platform for Plate Recognizer."""
+from __future__ import annotations
+
 import io
-from typing import List, Dict
-import json
+import logging
+from datetime import datetime
+from typing import Any
 
-from PIL import Image, ImageDraw, UnidentifiedImageError
-from pathlib import Path
+import aiohttp
 
-from homeassistant.components.image_processing import (
-    CONF_ENTITY_ID,
-    CONF_NAME,
-    CONF_SOURCE,
-    PLATFORM_SCHEMA,
-    ImageProcessingEntity,
+from homeassistant.components.image_processing import ImageProcessingEntity
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.util.dt import utcnow
+
+from .const import (
+    API_URL_CLOUD,
+    API_URL_STATISTICS,
+    ATTR_BOX_X_CENTRE,
+    ATTR_BOX_Y_CENTRE,
+    ATTR_CALLS_REMAINING,
+    ATTR_CONFIDENCE,
+    ATTR_MMC,
+    ATTR_ORIENTATION,
+    ATTR_PLATE,
+    ATTR_REGION_CODE,
+    ATTR_VEHICLE_TYPE,
+    CONF_ALWAYS_SAVE_LATEST,
+    CONF_API_TOKEN,
+    CONF_CAMERA_ENTITY,
+    CONF_DETECTION_RULE,
+    CONF_MMC,
+    CONF_ON_PREMISE,
+    CONF_REGION_MODE,
+    CONF_REGIONS,
+    CONF_SAVE_FILE_FOLDER,
+    CONF_SAVE_TIMESTAMPED,
+    CONF_SERVER,
+    CONF_WATCHED_PLATES,
+    DEFAULT_ALWAYS_SAVE_LATEST,
+    DEFAULT_DETECTION_RULE,
+    DEFAULT_MMC,
+    DEFAULT_ON_PREMISE,
+    DEFAULT_REGION_MODE,
+    DEFAULT_SAVE_TIMESTAMPED,
+    DEFAULT_SERVER,
+    DOMAIN,
+    EVENT_VEHICLE_DETECTED,
 )
-from homeassistant.const import ATTR_ENTITY_ID
-from homeassistant.core import split_entity_id
-import homeassistant.helpers.config_validation as cv
-import homeassistant.util.dt as dt_util
-from homeassistant.util.pil import draw_box
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATE_READER_URL = "https://api.platerecognizer.com/v1/plate-reader/"
-STATS_URL = "https://api.platerecognizer.com/v1/statistics/"
 
-EVENT_VEHICLE_DETECTED = "platerecognizer.vehicle_detected"
+def _parse_list_option(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [v.strip().lower() for v in value if v.strip()]
+    if isinstance(value, str):
+        return [v.strip().lower() for v in value.split(",") if v.strip()]
+    return []
 
-ATTR_PLATE = "plate"
-ATTR_CONFIDENCE = "confidence"
-ATTR_REGION_CODE = "region_code"
-ATTR_VEHICLE_TYPE = "vehicle_type"
-ATTR_ORIENTATION = "orientation"
-ATTR_BOX_Y_CENTRE = "box_y_centre"
-ATTR_BOX_X_CENTRE = "box_x_centre"
 
-CONF_API_TOKEN = "api_token"
-CONF_REGIONS = "regions"
-CONF_SAVE_FILE_FOLDER = "save_file_folder"
-CONF_SAVE_TIMESTAMPTED_FILE = "save_timestamped_file"
-CONF_ALWAYS_SAVE_LATEST_FILE = "always_save_latest_file"
-CONF_WATCHED_PLATES = "watched_plates"
-CONF_MMC = "mmc"
-CONF_SERVER = "server"
-CONF_DETECTION_RULE = "detection_rule"
-CONF_REGION_STRICT = "region"
-
-DATETIME_FORMAT = "%Y-%m-%d_%H-%M-%S"
-RED = (255, 0, 0)  # For objects within the ROI
-DEFAULT_REGIONS = ['None']
-
-PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
-    {
-        vol.Required(CONF_API_TOKEN): cv.string,
-        vol.Optional(CONF_REGIONS, default=DEFAULT_REGIONS): vol.All(
-            cv.ensure_list, [cv.string]
-        ),
-        vol.Optional(CONF_MMC, default=False): cv.boolean,
-        vol.Optional(CONF_SAVE_FILE_FOLDER): cv.isdir,
-        vol.Optional(CONF_SAVE_TIMESTAMPTED_FILE, default=False): cv.boolean,
-        vol.Optional(CONF_ALWAYS_SAVE_LATEST_FILE, default=False): cv.boolean,
-        vol.Optional(CONF_WATCHED_PLATES): vol.All(
-            cv.ensure_list, [cv.string]
-        ),
-        vol.Optional(CONF_SERVER, default=PLATE_READER_URL): cv.string,
-        vol.Optional(CONF_DETECTION_RULE, default=False): cv.string,
-        vol.Optional(CONF_REGION_STRICT, default=False): cv.string,
-    }
-)
-
-def get_plates(results : List[Dict]) -> List[str]:
-    """
-    Return the list of candidate plates. 
-    If no plates empty list returned.
-    """
-    plates = []
-    candidates = [result['candidates'] for result in results]
-    for candidate in candidates:
-        cand_plates = [cand['plate'] for cand in candidate]
-        for plate in cand_plates:
-            plates.append(plate)
-    return list(set(plates))
-
-def get_orientations(results : List[Dict]) -> List[str]:
-    """
-    Return the list of candidate orientations. 
-    If no orientations empty list returned.
-    """
+def _annotate_image(image: bytes, results: list[dict]) -> bytes:
+    """Draw bounding boxes and plate labels onto image using PIL."""
     try:
-        orientations = []
-        candidates = [result['orientation'] for result in results]
-        for candidate in candidates:
-            for cand in candidate:
-                _LOGGER.debug("get_orientations cand: %s", cand)
-                if cand["score"] >= 0.7:
-                    orientations.append(cand["orientation"])
-        return list(set(orientations))
-    except Exception as exc:
-        _LOGGER.error("get_orientations error: %s", exc)
+        from PIL import Image, ImageDraw, ImageFont
+        img = Image.open(io.BytesIO(image)).convert("RGB")
+        draw = ImageDraw.Draw(img)
+        try:
+            font = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24
+            )
+        except Exception:
+            font = ImageFont.load_default()
 
-def setup_platform(hass, config, add_entities, discovery_info=None):
-    """Set up the platform."""
-    # Validate credentials by processing image.
-    save_file_folder = config.get(CONF_SAVE_FILE_FOLDER)
-    if save_file_folder:
-        save_file_folder = Path(save_file_folder)
+        for r in results:
+            box = r.get("box", {})
+            xmin, ymin = box.get("xmin", 0), box.get("ymin", 0)
+            xmax, ymax = box.get("xmax", 0), box.get("ymax", 0)
+            plate = r.get("plate", "").upper()
+            score = r.get("score", 0)
 
-    entities = []
-    for camera in config[CONF_SOURCE]:
-        platerecognizer = PlateRecognizerEntity(
-            api_token=config.get(CONF_API_TOKEN),
-            regions = config.get(CONF_REGIONS),
-            save_file_folder=save_file_folder,
-            save_timestamped_file=config.get(CONF_SAVE_TIMESTAMPTED_FILE),
-            always_save_latest_file=config.get(CONF_ALWAYS_SAVE_LATEST_FILE),
-            watched_plates=config.get(CONF_WATCHED_PLATES),
-            camera_entity=camera[CONF_ENTITY_ID],
-            name=camera.get(CONF_NAME),
-            mmc=config.get(CONF_MMC),
-            server=config.get(CONF_SERVER),
-            detection_rule = config.get(CONF_DETECTION_RULE),
-            region_strict = config.get(CONF_REGION_STRICT),
+            # Bounding box — thicker line
+            draw.rectangle([xmin, ymin, xmax, ymax], outline="red", width=4)
 
-        )
-        entities.append(platerecognizer)
-    add_entities(entities)
+            # Label background + text above box
+            label = f"{plate} {score:.0%}"
+            bbox = draw.textbbox((xmin, ymin - 28), label, font=font)
+            draw.rectangle(bbox, fill="red")
+            draw.text((xmin, ymin - 28), label, fill="white", font=font)
+
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=90)
+        return out.getvalue()
+    except ImportError:
+        _LOGGER.debug("PIL not available — returning unannotated image")
+        return image
+    except Exception as err:
+        _LOGGER.warning("Image annotation failed: %s", err)
+        return image
+
+
+async def async_setup_platform(
+    hass: HomeAssistant,
+    config: ConfigType,
+    async_add_entities: AddEntitiesCallback,
+    discovery_info: DiscoveryInfoType | None = None,
+) -> None:
+    """Set up via platform discovery (legacy image_processing style)."""
+    if discovery_info is None:
+        return
+    entry_id = discovery_info["entry_id"]
+    cfg = hass.data[DOMAIN][entry_id]
+    entity = PlateRecognizerEntity(hass, entry_id, cfg)
+    async_add_entities([entity], update_before_add=False)
 
 
 class PlateRecognizerEntity(ImageProcessingEntity):
-    """Create entity."""
+    """Plate Recognizer image processing entity."""
 
-    def __init__(
-        self,
-        api_token,
-        regions,
-        save_file_folder,
-        save_timestamped_file,
-        always_save_latest_file,
-        watched_plates,
-        camera_entity,
-        name,
-        mmc,
-        server,
-        detection_rule,
-        region_strict,
-    ):
-        """Init."""
-        self._headers = {"Authorization": f"Token {api_token}"}
-        self._regions = regions
-        self._camera = camera_entity
-        if name:
-            self._name = name
-        else:
-            camera_name = split_entity_id(camera_entity)[1]
-            self._name = f"platerecognizer_{camera_name}"
-        self._save_file_folder = save_file_folder
-        self._save_timestamped_file = save_timestamped_file
-        self._always_save_latest_file = always_save_latest_file
-        self._watched_plates = watched_plates
-        self._mmc = mmc
-        self._server = server
-        self._detection_rule = detection_rule
-        self._region_strict = region_strict
-        self._state = None
-        self._results = {}
-        self._vehicles = [{}]
-        self._orientations = []
-        self._plates = []
-        self._statistics = {}
-        self._last_detection = None
-        self._image_width = None
-        self._image_height = None
-        self._image = None
-        self._config = {}
-        self.get_statistics()
+    _attr_should_poll = False
 
-    def process_image(self, image):
-        """Process an image."""
-        self._state = None
-        self._results = {}
-        self._vehicles = [{}]
-        self._plates = []
-        self._orientations = []
-        self._image = Image.open(io.BytesIO(bytearray(image)))
-        self._image_width, self._image_height = self._image.size
-        
-        if self._regions == DEFAULT_REGIONS:
-            regions = None
-        else:
-            regions = self._regions
-        if self._detection_rule:
-            self._config.update({"detection_rule" : self._detection_rule})
-        if self._region_strict:
-            self._config.update({"region": self._region_strict})
-        try:
-            _LOGGER.debug("Config: " + str(json.dumps(self._config)))
-            response = requests.post(
-                self._server, 
-                data=dict(regions=regions, camera_id=self.name, mmc=self._mmc, config=json.dumps(self._config)),  
-                files={"upload": image}, 
-                headers=self._headers
-            ).json()
-            self._results = response["results"]
-            self._plates = get_plates(response['results'])
-            if self._mmc:
-                self._orientations = get_orientations(response['results'])
-            self._vehicles = [
-                {
-                    ATTR_PLATE: r["plate"],
-                    ATTR_CONFIDENCE: r["score"],
-                    ATTR_REGION_CODE: r["region"]["code"],
-                    ATTR_VEHICLE_TYPE: r["vehicle"]["type"],
-                    ATTR_BOX_Y_CENTRE: (r["box"]["ymin"] + ((r["box"]["ymax"] - r["box"]["ymin"]) /2)),
-                    ATTR_BOX_X_CENTRE: (r["box"]["xmin"] + ((r["box"]["xmax"] - r["box"]["xmin"]) /2)),
-                }
-                for r in self._results
-            ]
-        except Exception as exc:
-            _LOGGER.error("platerecognizer error: %s", exc)
-            _LOGGER.error(f"platerecognizer api response: {response}")
+    def __init__(self, hass: HomeAssistant, entry_id: str, config: dict[str, Any]) -> None:
+        self.hass = hass
+        self._entry_id = entry_id
 
-        self._state = len(self._vehicles)
-        if self._state > 0:
-            self._last_detection = dt_util.now().strftime(DATETIME_FORMAT)
-            for vehicle in self._vehicles:
-                self.fire_vehicle_detected_event(vehicle)
-        if self._save_file_folder:
-            if self._state > 0 or self._always_save_latest_file:
-                self.save_image()
-        if self._server == PLATE_READER_URL:
-            self.get_statistics()
-        else:
-            stats = response["usage"]
-            calls_remaining = stats["max_calls"] - stats["calls"]
-            stats.update({"calls_remaining": calls_remaining})
-            self._statistics = stats
+        self._attr_camera_entity: str = config[CONF_CAMERA_ENTITY]
+        self._api_token: str = config.get(CONF_API_TOKEN, "")
+        self._on_premise: bool = config.get(CONF_ON_PREMISE, DEFAULT_ON_PREMISE)
+        self._server: str = config.get(CONF_SERVER, DEFAULT_SERVER).rstrip("/")
 
-    def get_statistics(self):
-        try:
-            response = requests.get(STATS_URL, headers=self._headers).json()
-            calls_remaining = response["total_calls"] - response["usage"]["calls"]
-            response.update({"calls_remaining": calls_remaining})
-            self._statistics = response.copy()
-        except Exception as exc:
-            _LOGGER.error("platerecognizer error getting statistics: %s", exc)
+        self._regions: list[str] = _parse_list_option(config.get(CONF_REGIONS, []))
+        self._watched_plates: list[str] = _parse_list_option(config.get(CONF_WATCHED_PLATES, []))
+        self._detection_rule: str = config.get(CONF_DETECTION_RULE, DEFAULT_DETECTION_RULE)
+        self._region_mode: str = config.get(CONF_REGION_MODE, DEFAULT_REGION_MODE)
+        self._mmc: bool = config.get(CONF_MMC, DEFAULT_MMC)
 
-    def fire_vehicle_detected_event(self, vehicle):
-        """Send event."""
-        vehicle_copy = vehicle.copy()
-        vehicle_copy.update({ATTR_ENTITY_ID: self.entity_id})
-        self.hass.bus.fire(EVENT_VEHICLE_DETECTED, vehicle_copy)
+        self._save_folder: str = config.get(CONF_SAVE_FILE_FOLDER, "")
+        self._save_timestamped: bool = config.get(CONF_SAVE_TIMESTAMPED, DEFAULT_SAVE_TIMESTAMPED)
+        self._always_save_latest: bool = config.get(CONF_ALWAYS_SAVE_LATEST, DEFAULT_ALWAYS_SAVE_LATEST)
 
-    def save_image(self):
-        """Save a timestamped image with bounding boxes around plates."""
-        draw = ImageDraw.Draw(self._image)
+        self._vehicles: list[dict[str, Any]] = []
+        self._all_plates: list[str] = []
+        self._watched_plate_status: dict[str, bool] = {p: False for p in self._watched_plates}
+        self._statistics: dict[str, Any] = {}
+        self._last_detection: str | None = None
+        self._last_results: list[dict] = []
 
-        decimal_places = 3
-        for vehicle in self._results:
-            box = (
-                    round(vehicle['box']["ymin"] / self._image_height, decimal_places),
-                    round(vehicle['box']["xmin"] / self._image_width, decimal_places),
-                    round(vehicle['box']["ymax"] / self._image_height, decimal_places),
-                    round(vehicle['box']["xmax"] / self._image_width, decimal_places),
-            )
-            text = vehicle['plate']
-            draw_box(
-                draw,
-                box,
-                self._image_width,
-                self._image_height,
-                text=text,
-                color=RED,
-                )
-
-        latest_save_path = self._save_file_folder / f"{self._name}_latest.png"
-        self._image.save(latest_save_path)
-
-        if self._save_timestamped_file:
-            timestamp_save_path = self._save_file_folder / f"{self._name}_{self._last_detection}.png"
-            self._image.save(timestamp_save_path)
-            _LOGGER.info("platerecognizer saved file %s", timestamp_save_path)
+        camera_slug = self._attr_camera_entity.replace("camera.", "")
+        self._camera_slug = camera_slug
+        self._attr_name = f"platerecognizer_{camera_slug}"
+        self._attr_unique_id = f"{DOMAIN}_{entry_id}"
 
     @property
-    def camera_entity(self):
-        """Return camera entity id from process pictures."""
-        return self._camera
+    def camera_entity(self) -> str:
+        return self._attr_camera_entity
 
     @property
-    def name(self):
-        """Return the name of the sensor."""
-        return self._name
+    def confidence(self) -> float | None:
+        return self._vehicles[0].get(ATTR_CONFIDENCE) if self._vehicles else None
 
     @property
-    def should_poll(self):
-        """Return the polling state."""
-        return False
+    def state(self) -> int:
+        return len(self._vehicles)
 
     @property
-    def state(self):
-        """Return the state of the entity."""
-        return self._state
-
-    @property
-    def unit_of_measurement(self):
-        """Return the unit of measurement."""
-        return ATTR_PLATE
-
-    @property
-    def extra_state_attributes(self):
-        """Return the attributes."""
-        attr = {}
-        attr.update({"last_detection": self._last_detection})
-        attr.update({"vehicles": self._vehicles})
-        attr.update({ATTR_ORIENTATION: self._orientations})
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attrs: dict[str, Any] = {
+            "vehicles": self._vehicles,
+            "statistics": self._statistics,
+            "last_detection": self._last_detection,
+        }
         if self._watched_plates:
-            watched_plates_results = {plate : False for plate in self._watched_plates}
-            for plate in self._watched_plates:
-                if plate in self._plates:
-                    watched_plates_results.update({plate: True})
-            attr[CONF_WATCHED_PLATES] = watched_plates_results
-        attr.update({"statistics": self._statistics})
-        if self._regions != DEFAULT_REGIONS:
-            attr[CONF_REGIONS] = self._regions
-        if self._server != PLATE_READER_URL:
-            attr[CONF_SERVER] = str(self._server)
-        if self._save_file_folder:
-            attr[CONF_SAVE_FILE_FOLDER] = str(self._save_file_folder)
-            attr[CONF_SAVE_TIMESTAMPTED_FILE] = self._save_timestamped_file
-            attr[CONF_ALWAYS_SAVE_LATEST_FILE] = self._always_save_latest_file
-        return attr
+            attrs["watched_plates"] = self._watched_plate_status
+        if self._regions:
+            attrs["regions"] = self._regions
+        if self._detection_rule != "none":
+            attrs["detection_rule"] = self._detection_rule
+        if self._region_mode != "none":
+            attrs["region_mode"] = self._region_mode
+        attrs["mmc"] = self._mmc
+        return attrs
+
+    @property
+    def _api_url(self) -> str:
+        return f"{self._server}/v1/plate-reader/" if self._on_premise else API_URL_CLOUD
+
+    @property
+    def _auth_headers(self) -> dict[str, str]:
+        return {} if self._on_premise else {"Authorization": f"Token {self._api_token}"}
+
+    async def _async_fetch_statistics(self) -> None:
+        if self._on_premise:
+            return
+        session = async_get_clientsession(self.hass)
+        try:
+            async with session.get(
+                API_URL_STATISTICS,
+                headers=self._auth_headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    usage = data.get("usage", {})
+                    total_calls = data.get("total_calls", 0)
+                    calls_used = usage.get("calls", 0)
+                    self._statistics = {
+                        "total_calls": total_calls,
+                        "calls_used": calls_used,
+                        ATTR_CALLS_REMAINING: total_calls - calls_used,
+                        **{k: v for k, v in usage.items() if k != "calls"},
+                    }
+        except aiohttp.ClientError as err:
+            _LOGGER.warning("Could not fetch statistics: %s", err)
+
+    def _push_image_to_entity(self, image: bytes) -> None:
+        """Annotate image with bounding boxes and push to image entity."""
+        entity = self.hass.data.get(DOMAIN, {}).get(f"image_entity_{self._entry_id}")
+        if entity is None:
+            return
+
+        async def _annotate_and_push() -> None:
+            annotated = await self.hass.async_add_executor_job(
+                _annotate_image, image, self._last_results
+            )
+            entity.update_image(annotated, self._vehicles, dict(self._watched_plate_status))
+
+        self.hass.async_create_task(_annotate_and_push())
+
+    async def async_process_image(self, image: bytes) -> None:
+        session = async_get_clientsession(self.hass)
+        post_data = aiohttp.FormData()
+        post_data.add_field(
+            "upload", io.BytesIO(image),
+            filename="image.jpg", content_type="image/jpeg",
+        )
+        post_data.add_field("camera_id", self._attr_camera_entity)
+
+        for region in self._regions:
+            post_data.add_field("regions", region)
+        if self._mmc:
+            post_data.add_field("mmc", "true")
+
+        config_parts: list[str] = []
+        if self._detection_rule and self._detection_rule != "none":
+            config_parts.append(f'"detection_rule":"{self._detection_rule}"')
+        if self._region_mode and self._region_mode != "none":
+            config_parts.append(f'"region":"{self._region_mode}"')
+        if config_parts:
+            post_data.add_field("config", "{" + ",".join(config_parts) + "}")
+
+        try:
+            async with session.post(
+                self._api_url,
+                headers=self._auth_headers,
+                data=post_data,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                if resp.status not in (200, 201):
+                    _LOGGER.error("API error HTTP %s: %s", resp.status, await resp.text())
+                    return
+                payload = await resp.json()
+                _LOGGER.debug("API response: %s", payload)
+        except aiohttp.ClientError as err:
+            _LOGGER.error("Connection error: %s", err)
+            return
+
+        self._handle_response(payload)
+        self._push_image_to_entity(image)
+
+        if self._save_folder:
+            self.hass.async_create_task(
+                self._async_save_image(image, bool(self._vehicles))
+            )
+        await self._async_fetch_statistics()
+
+    def _handle_response(self, payload: dict[str, Any]) -> None:
+        results: list[dict] = payload.get("results", [])
+        self._last_results = results
+
+        usage = payload.get("usage", {})
+        if usage:
+            max_calls = usage.get("max_calls", usage.get("total_calls", 0))
+            calls_used = usage.get("calls", 0)
+            self._statistics = {**usage, ATTR_CALLS_REMAINING: max_calls - calls_used}
+
+        self._vehicles = []
+        self._all_plates = []
+
+        for r in results:
+            candidates = r.get("candidates", [])
+            if candidates:
+                best = max(candidates, key=lambda c: c.get("score", 0))
+                plate_str = best.get("plate", r.get("plate", "")).upper()
+                confidence = best.get("score", r.get("score", 0.0))
+            else:
+                plate_str = r.get("plate", "").upper()
+                confidence = r.get("score", 0.0)
+
+            box = r.get("box", {})
+            vehicle: dict[str, Any] = {
+                ATTR_PLATE: plate_str,
+                ATTR_CONFIDENCE: round(confidence, 3),
+                ATTR_REGION_CODE: r.get("region", {}).get("code", "unknown"),
+                ATTR_VEHICLE_TYPE: r.get("vehicle", {}).get("type", "unknown"),
+                ATTR_BOX_Y_CENTRE: round((box.get("ymin", 0) + box.get("ymax", 0)) / 2, 1),
+                ATTR_BOX_X_CENTRE: round((box.get("xmin", 0) + box.get("xmax", 0)) / 2, 1),
+            }
+
+            if self._mmc:
+                vdata = r.get("vehicle", {})
+                try:
+                    vehicle[ATTR_ORIENTATION] = vdata.get("orientation", [{}])[0].get("orientation", "unknown")
+                    vehicle[ATTR_MMC] = {
+                        "make": vdata.get("make", [{}])[0].get("name", "unknown"),
+                        "model": vdata.get("model", [{}])[0].get("name", "unknown"),
+                        "color": vdata.get("color", [{}])[0].get("name", "unknown"),
+                    }
+                except (IndexError, KeyError, TypeError):
+                    pass
+
+            self._vehicles.append(vehicle)
+            self._all_plates.append(plate_str)
+            self.hass.bus.fire(EVENT_VEHICLE_DETECTED, {"entity_id": self.entity_id, **vehicle})
+
+        # Update watched plate status (kept in attributes for automation use)
+        if self._watched_plates:
+            detected_lower = [p.lower() for p in self._all_plates]
+            self._watched_plate_status = {
+                wp: wp.lower() in detected_lower or
+                    any(self._fuzzy_match(wp, dp) for dp in detected_lower)
+                for wp in self._watched_plates
+            }
+
+        if results:
+            self._last_detection = utcnow().strftime("%Y-%m-%d_%H-%M-%S")
+
+    async def _async_save_image(self, image: bytes, had_detections: bool) -> None:
+        from pathlib import Path
+        folder = Path(self._save_folder) if self._save_folder else Path("/config/www/platerecognizer")
+
+        def _write_files() -> None:
+            folder.mkdir(parents=True, exist_ok=True)
+            slug = self._attr_camera_entity.replace("camera.", "").replace(".", "_")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            if self._always_save_latest or had_detections:
+                (folder / f"{slug}_latest.jpg").write_bytes(image)
+            if self._save_timestamped and had_detections:
+                (folder / f"{slug}_{timestamp}.jpg").write_bytes(image)
+
+        try:
+            await self.hass.async_add_executor_job(_write_files)
+        except OSError as err:
+            _LOGGER.error("Failed to save image: %s", err)
+
+    @staticmethod
+    def _fuzzy_match(watched: str, detected: str, tolerance: int = 2) -> bool:
+        w, d = watched.lower(), detected.lower()
+        if w == d:
+            return True
+        if abs(len(w) - len(d)) > tolerance:
+            return False
+        return sum(c1 != c2 for c1, c2 in zip(w, d)) + abs(len(w) - len(d)) <= tolerance
