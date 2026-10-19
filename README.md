@@ -9,86 +9,48 @@
 
 A modern Home Assistant integration for [Plate Recognizer](https://platerecognizer.com/) — detect and read vehicle license plates from any HA camera using the [Snapshot Cloud API](https://guides.platerecognizer.com/docs/snapshot/api-reference) or a self-hosted On-Premise SDK. No Docker required.
 
-> **Forked and rewritten from** [robmarkcole/HASS-plate-recognizer](https://github.com/robmarkcole/HASS-plate-recognizer) — modernized with Config Flow UI, image entity with bounding boxes, per-camera statistics sensor, and full HA 2024.x+ compatibility.
+> Talks directly to the Plate Recognizer API. The idea of a Plate Recognizer integration for Home Assistant was pioneered by [@robmarkcole](https://github.com/robmarkcole/HASS-plate-recognizer); this integration is a separate implementation built on config entries.
 
 ---
 
 ## Features
 
-- ✅ **Config Flow** — set up entirely through the HA UI, no YAML required
-- ✅ **Options Flow** — change regions, watched plates, detection rules without restart
-- ✅ **Image entity** — live annotated snapshot with bounding boxes drawn around detected plates
-- ✅ **Statistics sensor** — API calls remaining per camera, resets date, usage breakdown
-- ✅ **Watched plates** — fuzzy matching (tolerates 1–2 character errors) with `watched_plates` attribute
-- ✅ **`platerecognizer.vehicle_detected` event** fired per detection
-- ✅ **Multi-camera** — add multiple cameras, each gets its own set of entities
-- ✅ **HACS compatible**
-- ✅ **Cloud API and On-Premise SDK** support
-- ✅ **Make / Model / Colour (MMC)** for eligible paid plans
-- ✅ **`camera_id` passthrough** — camera name sent to Plate Recognizer dashboard for filtering
-
-![Platrecognizer](https://github.com/user-attachments/assets/304e8451-1b6d-402b-9c8c-9461d69ff3c6)
+- ✅ **UI setup** — config flow and options flow, no YAML, no restart
+- ✅ **Scan button** — `button.press` from any automation (e.g. on a Frigate car event)
+- ✅ **Last plate sensor** — best plate as state, every read (score, country, vehicle, box) in attributes
+- ✅ **Last frame image** — the scanned frame with plates outlined
+- ✅ **Remaining calls sensor** — cloud API allowance left this month
+- ✅ **Watchlist** — near-match (up to 2 characters off), plus `on_watchlist` in the event
+- ✅ **`platerecognizer_plate_read` event** fired for every plate
+- ✅ **Cloud API or local SDK**, make/model/colour for eligible plans
+- ✅ **Multi-camera** — one device per camera
 
 ---
 
-## Entities Created
+## Entities
 
-Each configured camera produces three entities:
+Each camera gets a device, **Plate Recognizer &lt;camera name&gt;**, with:
 
-| Entity | Example ID | Description |
+| Entity | Example | What it does |
 |---|---|---|
-| `image_processing` | `image_processing.platerecognizer_frontgate` | Core entity — trigger scans, view detection results |
-| `image` | `image.platerecognizer_frontgate` | Annotated snapshot with red bounding boxes and plate labels |
-| `sensor` | `sensor.platerecognizer_frontgate_stats` | API calls remaining (state) with full usage breakdown (attributes) |
+| Button | `button.plate_recognizer_front_gate_scan` | Grab a frame and read plates |
+| Sensor | `sensor.plate_recognizer_front_gate_last_plate` | Best plate from the last scan |
+| Image | `image.plate_recognizer_front_gate_last_frame` | Last scanned frame, plates outlined |
+| Sensor | `sensor.plate_recognizer_front_gate_remaining_calls` | Cloud calls left (cloud only) |
 
-### image_processing attributes
+Last plate attributes:
 
 ```yaml
-vehicles:
+plates_found: 1
+reads:
   - plate: ABC123
-    confidence: 1.0
-    region_code: my
-    vehicle_type: Sedan
-    box_y_centre: 234.5
-    box_x_centre: 456.2
-watched_plates:
+    score: 0.912
+    country: my
+    vehicle: Sedan
+    box: {xmin: 410, ymin: 220, xmax: 502, ymax: 250}
+scanned_at: "2026-10-19T12:30:00+00:00"
+watchlist:
   ABC123: true
-  XYZ456: false
-statistics:
-  total_calls: 2500
-  calls_used: 320
-  calls_remaining: 2180
-  month: 9
-  year: 2026
-  resets_on: '2026-09-21T07:56:27Z'
-last_detection: '2026-09-08_23-10-28'
-regions:
-  - my
-mmc: false
-```
-
-### image attributes
-
-```yaml
-vehicles:
-  - plate: ABC123
-    confidence: 1.0
-    region_code: my
-    vehicle_type: Sedan
-watched_plates:
-  ABC123: true
-  XYZ456: false
-```
-
-### sensor attributes
-
-```yaml
-total_calls: 2500
-calls_used: 320
-calls_remaining: 2180
-month: 9
-year: 2026
-resets_on: '2026-09-21T07:56:27Z'
 ```
 
 ---
@@ -128,140 +90,86 @@ To add a second camera, click **Add service** on the integration page and repeat
 
 ## Options
 
-After setup, click **Configure** (⚙️) on the integration card to adjust:
+Click **Configure** on the integration to set:
 
 | Option | Description |
 |---|---|
-| `regions` | Comma-separated country codes to hint the engine, e.g. `my, sg` — see [country codes](https://guides.platerecognizer.com/docs/snapshot/api-reference/#region-code) |
-| `watched_plates` | Comma-separated plates for fuzzy matching, e.g. `ABC123, XYZ456` |
-| `detection_rule` | `none` (default) or `strict` — discard plates not inside a vehicle bounding box |
-| `region_mode` | `none` (default) or `strict` — only return plates matching the region template |
-| `mmc` | Enable Make / Model / Colour — requires an eligible paid plan |
-| `save_file_folder` | Absolute path to save processed images, e.g. `/config/www/platerecognizer/` |
-| `save_timestamped_file` | Save a timestamped copy on each detection |
-| `always_save_latest_file` | Always overwrite `<camera>_latest.jpg` regardless of detections |
+| Country hints | Codes such as `my, sg` — see [country codes](https://guides.platerecognizer.com/docs/tech-references/country-codes) |
+| Watchlist | Plates to watch, e.g. `ABC123, XYZ456` |
+| Ignore plates not on a vehicle | Drop plates found outside a vehicle |
+| Only accept hinted country formats | Reject plates that don't fit the hinted countries |
+| Make, model and colour | Eligible paid plans only |
+| Snapshot folder | e.g. `/config/www/platerecognizer`; blank turns saving off |
+| Keep history | Timestamped copy of every frame with a plate |
+| Save every scan | Update `<camera>_last.jpg` even when nothing is found |
+
+Changing options reloads the entry; your entity names, areas and history are kept.
 
 ---
 
-## Triggering a Scan
+## Scanning
 
-The integration does **not** auto-scan — call the action manually or from an automation:
+Scans run only when you ask:
 
 ```yaml
-action: image_processing.scan
+action: button.press
 target:
-  entity_id: image_processing.platerecognizer_frontgate
+  entity_id: button.plate_recognizer_front_gate_scan
 ```
 
-### Example — scan on Frigate car detection (MQTT)
+### Example — notify on a plate
 
 ```yaml
-alias: "LPR - Scan on Frigate car detection"
-trigger:
-  - platform: mqtt
-    topic: frigate/events
-condition:
-  - condition: template
-    value_template: >
-      {{ trigger.payload_json.after.camera == 'FrigateFrontGate'
-         and trigger.payload_json.type in ['new', 'end']
-         and trigger.payload_json.after.label in ['car', 'motorcycle']
-         and trigger.payload_json.after.has_snapshot == true
-         and trigger.payload_json.after.false_positive == false }}
-  - condition: template
-    value_template: >
-      {{ 'LuarPagar' in trigger.payload_json.after.current_zones
-         or 'LuarPagar' in trigger.payload_json.after.entered_zones }}
-  - condition: template
-    value_template: >
-      {{ (as_timestamp(now()) - as_timestamp(
-          states.image_processing.platerecognizer_frontgate.last_changed
-          | default(0))) > 30 }}
-action:
-  - delay:
-      milliseconds: 500
-  - action: image_processing.scan
-    target:
-      entity_id: image_processing.platerecognizer_frontgate
-mode: single
-max_exceeded: silent
-```
-
-### Example — notify on detection
-
-```yaml
-alias: "LPR - Notify on plate detection"
-trigger:
-  - platform: event
-    event_type: platerecognizer.vehicle_detected
-action:
+alias: "LPR - Notify on plate"
+triggers:
+  - trigger: event
+    event_type: platerecognizer_plate_read
+actions:
   - action: notify.mobile_app_your_phone
     data:
-      title: "🚗 Plate Detected"
+      title: "🚗 {{ trigger.event.data.plate }}"
       message: >
-        Plate: {{ trigger.event.data.plate }}
-        Confidence: {{ (trigger.event.data.confidence * 100) | round(1) }}%
-        Vehicle: {{ trigger.event.data.vehicle_type }}
+        {{ (trigger.event.data.score * 100) | round(1) }}% ·
+        {{ trigger.event.data.vehicle }}
 ```
 
-### Example — trigger action on known plate
+### Example — open the gate for a watchlist plate
 
 ```yaml
-alias: "LPR - Open gate for known plate"
-trigger:
-  - platform: event
-    event_type: platerecognizer.vehicle_detected
-condition:
-  - condition: template
-    value_template: >
-      {{ trigger.event.data.plate in ['ABC123', 'XYZ456'] }}
-action:
+alias: "LPR - Open gate for watchlist"
+triggers:
+  - trigger: event
+    event_type: platerecognizer_plate_read
+    event_data:
+      on_watchlist: true
+actions:
   - action: switch.turn_on
     target:
       entity_id: switch.driveway_gate
 ```
 
----
-
-## Events
-
-Every detected vehicle fires a `platerecognizer.vehicle_detected` event:
+## Event
 
 ```yaml
-event_type: platerecognizer.vehicle_detected
+event_type: platerecognizer_plate_read
 data:
-  entity_id: image_processing.platerecognizer_frontgate
+  config_entry_id: 01J...
+  camera: camera.front_gate
   plate: ABC123
-  confidence: 1.0
-  region_code: my
-  vehicle_type: Sedan
-  box_y_centre: 234.5
-  box_x_centre: 456.2
+  score: 0.912
+  country: my
+  vehicle: Sedan
+  box: {xmin: 410, ymin: 220, xmax: 502, ymax: 250}
+  on_watchlist: false
 ```
 
 ---
 
-## Dashboard
+## Upgrading from 2.x
 
-### Picture Entity Card (annotated image)
-
-```yaml
-type: picture-entity
-entity: image.platerecognizer_frontgate
-show_state: false
-show_name: true
-```
-
-### Glance card (stats + last detection)
-
-```yaml
-type: glance
-entities:
-  - entity: sensor.platerecognizer_frontgate_stats
-    name: Calls Remaining
-  - entity: image_processing.platerecognizer_frontgate
-    name: Last Plates
-```
+- The `image_processing` entity is gone; use the **Scan** button (`button.press`) instead of `image_processing.scan`.
+- The event is now `platerecognizer_plate_read`; `confidence` is `score`, `region_code` is `country`, `vehicle_type` is `vehicle`, and the box is a full `box`.
+- Your options are migrated automatically, and the stats/image entities keep their customisations.
 
 ---
 
@@ -273,27 +181,10 @@ Common codes: `my` (Malaysia), `sg` (Singapore), `gb` (UK), `au` (Australia), `u
 
 ---
 
-## Comparison with Original
-
-| Feature | Original (robmarkcole) | This Integration |
-|---|---|---|
-| Setup | YAML only | Config Flow UI ✅ |
-| Options | Restart required | Options Flow, no restart ✅ |
-| Image entity | ❌ | Annotated with bounding boxes ✅ |
-| Statistics sensor | ❌ | Per camera, full usage breakdown ✅ |
-| `camera_id` passthrough | ❌ | Sent to Plate Recognizer dashboard ✅ |
-| Multi-camera | Manual YAML entries | Add service button ✅ |
-| HA version | 2021.x | 2024.1+ ✅ |
-| Watched plates | Basic match | Fuzzy match (±2 chars) ✅ |
-| On-Premise SDK | ✅ | ✅ |
-| MMC support | ✅ | ✅ |
-
----
-
 ## Credits
 
 - Plate Recognizer API: [platerecognizer.com](https://platerecognizer.com/)
-- Original integration by [@robmarkcole](https://github.com/robmarkcole/HASS-plate-recognizer)
+- Thanks to [@robmarkcole](https://github.com/robmarkcole/HASS-plate-recognizer) for the original YAML integration that inspired this one
 
 ---
 
