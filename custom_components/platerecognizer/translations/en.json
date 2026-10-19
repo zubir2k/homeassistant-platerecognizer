@@ -2,40 +2,51 @@
   "config": {
     "step": {
       "user": {
-        "title": "Plate Recognizer — Setup",
-        "description": "Enter your Plate Recognizer API token from {dashboard_url}. Enable **On-Premise** if you are running a local SDK instead of the cloud API.",
+        "title": "Add a camera",
+        "description": "Get your API token from {dashboard_url}. Running the self-hosted SDK instead? Leave the token blank and turn on the local SDK.",
         "data": {
-          "on_premise": "Use On-Premise SDK (local server)",
-          "api_token": "API Token (leave blank for On-Premise)",
-          "server": "On-Premise server URL (e.g. http://localhost:8080)",
-          "camera_entity": "Source camera"
+          "camera_entity": "Camera",
+          "api_token": "API token",
+          "use_local_sdk": "Use a local Plate Recognizer SDK",
+          "sdk_url": "Local SDK address"
         }
       }
     },
     "error": {
-      "invalid_auth": "Invalid API token — check your Plate Recognizer dashboard.",
-      "cannot_connect": "Could not connect to the API. Check your token or server URL.",
-      "unknown": "Unexpected error. Check the Home Assistant logs."
+      "invalid_auth": "The API token was rejected.",
+      "cannot_connect": "Could not reach Plate Recognizer. Check the token or SDK address."
     },
     "abort": {
-      "already_configured": "This camera is already configured."
+      "already_configured": "This camera is already set up."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Plate Recognizer — Options",
+        "title": "Scan options",
         "data": {
-          "regions": "Regions / countries to filter (comma-separated, e.g. my, sg)",
-          "watched_plates": "Watched plates for fuzzy matching (comma-separated)",
-          "detection_rule": "Detection rule",
-          "region_mode": "Region strict mode",
-          "mmc": "Enable Make / Model / Colour (paid plan)",
-          "save_file_folder": "Folder to save processed images (leave blank to disable)",
-          "save_timestamped_file": "Save timestamped image on detection",
-          "always_save_latest_file": "Always save latest image (even with no detection)"
+          "countries": "Country hints (comma separated codes, e.g. my, sg)",
+          "watchlist": "Watchlist plates (comma separated)",
+          "plate_in_vehicle_only": "Ignore plates that are not on a vehicle",
+          "match_country_format": "Only accept plates in the hinted country formats",
+          "vehicle_details": "Include make, model and colour (paid plans)",
+          "snapshot_dir": "Folder for saved frames (blank to turn off)",
+          "snapshot_keep_history": "Keep a timestamped copy of every frame with a plate",
+          "snapshot_every_scan": "Save the last frame even when no plate is found"
         }
       }
+    }
+  },
+  "entity": {
+    "button": {
+      "scan": { "name": "Scan" }
+    },
+    "image": {
+      "last_frame": { "name": "Last frame" }
+    },
+    "sensor": {
+      "last_plate": { "name": "Last plate" },
+      "remaining_calls": { "name": "Remaining calls" }
     }
   }
 }
