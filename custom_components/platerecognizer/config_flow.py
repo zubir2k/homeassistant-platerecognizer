@@ -1,207 +1,129 @@
-"""Config flow for Plate Recognizer integration."""
+"""Config and options flow for Plate Recognizer."""
+
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 import aiohttp
 import voluptuous as vol
 
-from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN
-from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     BooleanSelector,
     EntitySelector,
     EntitySelectorConfig,
-    SelectSelector,
-    SelectSelectorConfig,
-    SelectSelectorMode,
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
 )
 
 from .const import (
-    CONF_ALWAYS_SAVE_LATEST,
-    CONF_API_TOKEN,
-    CONF_CAMERA_ENTITY,
-    CONF_DETECTION_RULE,
-    CONF_MMC,
-    CONF_ON_PREMISE,
-    CONF_REGION_MODE,
-    CONF_REGIONS,
-    CONF_SAVE_FILE_FOLDER,
-    CONF_SAVE_TIMESTAMPED,
-    CONF_SERVER,
-    CONF_WATCHED_PLATES,
-    DEFAULT_ALWAYS_SAVE_LATEST,
-    DEFAULT_DETECTION_RULE,
-    DEFAULT_MMC,
-    DEFAULT_ON_PREMISE,
-    DEFAULT_REGION_MODE,
-    DEFAULT_SAVE_TIMESTAMPED,
-    DEFAULT_SERVER,
-    DETECTION_RULES,
+    CLOUD_DASHBOARD_URL,
+    CLOUD_USAGE_URL,
+    DEFAULT_SDK_URL,
     DOMAIN,
-    REGION_MODES,
+    OPT_CAMERA,
+    OPT_COUNTRIES,
+    OPT_LOCAL_SDK,
+    OPT_MATCH_COUNTRY_FORMAT,
+    OPT_PLATE_IN_VEHICLE_ONLY,
+    OPT_SDK_URL,
+    OPT_SNAPSHOT_DIR,
+    OPT_SNAPSHOT_EVERY_SCAN,
+    OPT_SNAPSHOT_KEEP_HISTORY,
+    OPT_TOKEN,
+    OPT_VEHICLE_DETAILS,
+    OPT_WATCHLIST,
 )
 
-_LOGGER = logging.getLogger(__name__)
 
-
-async def _validate_api_token(
-    hass: HomeAssistant, token: str, on_premise: bool, server: str
-) -> dict[str, str]:
-    """Try a lightweight API call and return errors dict (empty = success)."""
-    session = async_get_clientsession(hass)
-    if on_premise:
-        url = f"{server.rstrip('/')}/info/"
+async def _check_connection(hass: HomeAssistant, data: dict[str, Any]) -> str | None:
+    """Return an error key, or None when the token / SDK answers."""
+    if data.get(OPT_LOCAL_SDK):
+        url = f"{str(data.get(OPT_SDK_URL) or DEFAULT_SDK_URL).rstrip('/')}/info/"
         headers: dict[str, str] = {}
     else:
-        url = "https://api.platerecognizer.com/v1/statistics/"
-        headers = {"Authorization": f"Token {token}"}
-
+        url = CLOUD_USAGE_URL
+        headers = {"Authorization": f"Token {data.get(OPT_TOKEN, '')}"}
+    session = async_get_clientsession(hass)
     try:
-        async with session.get(
-            url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)
-        ) as resp:
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
             if resp.status == 200:
-                return {}
+                return None
             if resp.status in (401, 403):
-                return {"base": "invalid_auth"}
-            return {"base": "cannot_connect"}
-    except aiohttp.ClientConnectorError:
-        return {"base": "cannot_connect"}
-    except Exception:  # noqa: BLE001
-        return {"base": "unknown"}
+                return "invalid_auth"
+            return "cannot_connect"
+    except (aiohttp.ClientError, TimeoutError):
+        return "cannot_connect"
 
 
 class PlateRecognizerConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Plate Recognizer."""
+    """Add a camera."""
 
-    VERSION = 1
+    VERSION = 2
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Step 1 — API credentials and source camera."""
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
-
         if user_input is not None:
-            on_premise = user_input.get(CONF_ON_PREMISE, DEFAULT_ON_PREMISE)
-            server = user_input.get(CONF_SERVER, DEFAULT_SERVER)
-            token = user_input.get(CONF_API_TOKEN, "")
-
-            errors = await _validate_api_token(hass=self.hass, token=token, on_premise=on_premise, server=server)
-
-            if not errors:
-                camera = user_input[CONF_CAMERA_ENTITY]
-                title = f"Plate Recognizer — {camera}"
+            await self.async_set_unique_id(user_input[OPT_CAMERA])
+            self._abort_if_unique_id_configured()
+            if (error := await _check_connection(self.hass, user_input)) is None:
+                camera = self.hass.states.get(user_input[OPT_CAMERA])
+                title = camera.name if camera else user_input[OPT_CAMERA]
                 return self.async_create_entry(title=title, data=user_input)
+            errors["base"] = error
 
         schema = vol.Schema(
             {
-                vol.Optional(CONF_ON_PREMISE, default=DEFAULT_ON_PREMISE): BooleanSelector(),
-                vol.Optional(CONF_API_TOKEN, default=""): TextSelector(
+                vol.Required(OPT_CAMERA): EntitySelector(EntitySelectorConfig(domain="camera")),
+                vol.Optional(OPT_TOKEN, default=""): TextSelector(
                     TextSelectorConfig(type=TextSelectorType.PASSWORD)
                 ),
-                vol.Optional(CONF_SERVER, default=DEFAULT_SERVER): TextSelector(
+                vol.Optional(OPT_LOCAL_SDK, default=False): BooleanSelector(),
+                vol.Optional(OPT_SDK_URL, default=DEFAULT_SDK_URL): TextSelector(
                     TextSelectorConfig(type=TextSelectorType.URL)
-                ),
-                vol.Required(CONF_CAMERA_ENTITY): EntitySelector(
-                    EntitySelectorConfig(domain=CAMERA_DOMAIN)
                 ),
             }
         )
-
         return self.async_show_form(
             step_id="user",
-            data_schema=schema,
+            data_schema=self.add_suggested_values_to_schema(schema, user_input),
             errors=errors,
-            description_placeholders={
-                "dashboard_url": "https://app.platerecognizer.com/service/snapshot-cloud/"
-            },
+            description_placeholders={"dashboard_url": CLOUD_DASHBOARD_URL},
         )
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: ConfigEntry) -> "PlateRecognizerOptionsFlow":
-        """Return the options flow."""
+    def async_get_options_flow(config_entry: ConfigEntry) -> PlateRecognizerOptionsFlow:
         return PlateRecognizerOptionsFlow()
 
 
 class PlateRecognizerOptionsFlow(OptionsFlow):
-    """Handle options for Plate Recognizer."""
+    """Tune how scans are made and stored."""
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Manage the options."""
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            return self.async_create_entry(data=user_input)
 
-        current = {**self.config_entry.data, **self.config_entry.options}
-
-        def _list_to_str(val: Any) -> str:
-            if isinstance(val, list):
-                return ", ".join(val)
-            return val or ""
-
+        text = TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT))
         schema = vol.Schema(
             {
-                vol.Optional(
-                    CONF_REGIONS,
-                    default=_list_to_str(current.get(CONF_REGIONS, "")),
-                ): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
-
-                vol.Optional(
-                    CONF_WATCHED_PLATES,
-                    default=_list_to_str(current.get(CONF_WATCHED_PLATES, "")),
-                ): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
-
-                vol.Optional(
-                    CONF_DETECTION_RULE,
-                    default=current.get(CONF_DETECTION_RULE, DEFAULT_DETECTION_RULE),
-                ): SelectSelector(
-                    SelectSelectorConfig(
-                        options=DETECTION_RULES,
-                        mode=SelectSelectorMode.LIST,
-                    )
-                ),
-
-                vol.Optional(
-                    CONF_REGION_MODE,
-                    default=current.get(CONF_REGION_MODE, DEFAULT_REGION_MODE),
-                ): SelectSelector(
-                    SelectSelectorConfig(
-                        options=REGION_MODES,
-                        mode=SelectSelectorMode.LIST,
-                    )
-                ),
-
-                vol.Optional(
-                    CONF_MMC,
-                    default=current.get(CONF_MMC, DEFAULT_MMC),
-                ): BooleanSelector(),
-
-                vol.Optional(
-                    CONF_SAVE_FILE_FOLDER,
-                    default=current.get(CONF_SAVE_FILE_FOLDER, ""),
-                ): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
-
-                vol.Optional(
-                    CONF_SAVE_TIMESTAMPED,
-                    default=current.get(CONF_SAVE_TIMESTAMPED, DEFAULT_SAVE_TIMESTAMPED),
-                ): BooleanSelector(),
-
-                vol.Optional(
-                    CONF_ALWAYS_SAVE_LATEST,
-                    default=current.get(CONF_ALWAYS_SAVE_LATEST, DEFAULT_ALWAYS_SAVE_LATEST),
-                ): BooleanSelector(),
+                vol.Optional(OPT_COUNTRIES, default=""): text,
+                vol.Optional(OPT_WATCHLIST, default=""): text,
+                vol.Optional(OPT_PLATE_IN_VEHICLE_ONLY, default=False): BooleanSelector(),
+                vol.Optional(OPT_MATCH_COUNTRY_FORMAT, default=False): BooleanSelector(),
+                vol.Optional(OPT_VEHICLE_DETAILS, default=False): BooleanSelector(),
+                vol.Optional(OPT_SNAPSHOT_DIR, default=""): text,
+                vol.Optional(OPT_SNAPSHOT_KEEP_HISTORY, default=False): BooleanSelector(),
+                vol.Optional(OPT_SNAPSHOT_EVERY_SCAN, default=False): BooleanSelector(),
             }
         )
-
-        return self.async_show_form(step_id="init", data_schema=schema)
+        current = {**self.config_entry.data, **self.config_entry.options}
+        for key in (OPT_COUNTRIES, OPT_WATCHLIST):
+            if isinstance(current.get(key), list):
+                current[key] = ", ".join(current[key])
+        return self.async_show_form(
+            step_id="init", data_schema=self.add_suggested_values_to_schema(schema, current)
+        )
