@@ -99,6 +99,28 @@ class ScanResult:
     frame: bytes | None = None
 
 
+def snapshot_dir_error(hass: HomeAssistant, folder: str) -> str | None:
+    """Return an error key when frames must not be written to this folder.
+
+    Anything under /config/www is served at /local/ without authentication,
+    so camera frames are never written there. The folder must also be on
+    Home Assistant's allowlist (allowlist_external_dirs, which includes the
+    media folders by default).
+    """
+    if not folder:
+        return None
+    path = Path(folder)
+    if not path.is_absolute():
+        return "snapshot_dir_not_absolute"
+    resolved = path.resolve()
+    www = Path(hass.config.path("www")).resolve()
+    if resolved == www or www in resolved.parents:
+        return "snapshot_dir_public"
+    if not hass.config.is_allowed_path(str(resolved)):
+        return "snapshot_dir_not_allowed"
+    return None
+
+
 class PlateScanner:
     """Grabs a camera frame, sends it to Plate Recognizer and keeps the result."""
 
@@ -117,6 +139,14 @@ class PlateScanner:
         self._snapshot_dir: str = str(settings.get(OPT_SNAPSHOT_DIR) or "").strip()
         self._keep_history: bool = settings.get(OPT_SNAPSHOT_KEEP_HISTORY, False)
         self._every_scan: bool = settings.get(OPT_SNAPSHOT_EVERY_SCAN, False)
+        if self._snapshot_dir and (problem := snapshot_dir_error(hass, self._snapshot_dir)):
+            _LOGGER.warning(
+                "Not saving frames for %s to %s (%s); pick another folder in the options",
+                self.camera,
+                self._snapshot_dir,
+                problem,
+            )
+            self._snapshot_dir = ""
 
         self.result = ScanResult(watchlist={p: False for p in self.watchlist})
         self.usage: dict[str, Any] = {}
@@ -180,8 +210,8 @@ class PlateScanner:
                         f"Plate Recognizer returned HTTP {resp.status}: {await resp.text()}"
                     )
                 body = await resp.json()
-        except aiohttp.ClientError as err:
-            raise HomeAssistantError(f"Cannot reach Plate Recognizer: {err}") from err
+        except (aiohttp.ClientError, TimeoutError) as err:
+            raise HomeAssistantError(f"Cannot reach Plate Recognizer: {err!r}") from err
 
         reads = [self._to_read(item) for item in body.get("results", [])]
         seen = [read["plate"] for read in reads]
@@ -246,8 +276,8 @@ class PlateScanner:
                 if resp.status != 200:
                     return
                 body = await resp.json()
-        except aiohttp.ClientError as err:
-            _LOGGER.debug("Usage lookup failed: %s", err)
+        except (aiohttp.ClientError, TimeoutError) as err:
+            _LOGGER.debug("Usage lookup failed: %r", err)
             return
         allowance = body.get("total_calls", 0)
         used = (body.get("usage") or {}).get("calls", 0)
