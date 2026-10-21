@@ -102,6 +102,8 @@ class ScanResult:
 def snapshot_dir_error(hass: HomeAssistant, folder: str) -> str | None:
     """Return an error key when frames must not be written to this folder.
 
+    Touches the filesystem (Path.resolve), so run it in the executor.
+
     Anything under /config/www is served at /local/ without authentication,
     so camera frames are never written there. The folder must also be on
     Home Assistant's allowlist (allowlist_external_dirs, which includes the
@@ -139,7 +141,19 @@ class PlateScanner:
         self._snapshot_dir: str = str(settings.get(OPT_SNAPSHOT_DIR) or "").strip()
         self._keep_history: bool = settings.get(OPT_SNAPSHOT_KEEP_HISTORY, False)
         self._every_scan: bool = settings.get(OPT_SNAPSHOT_EVERY_SCAN, False)
-        if self._snapshot_dir and (problem := snapshot_dir_error(hass, self._snapshot_dir)):
+
+        self.result = ScanResult(watchlist={p: False for p in self.watchlist})
+        self.usage: dict[str, Any] = {}
+        self._listeners: list[Callable[[], None]] = []
+
+    async def async_check_snapshot_dir(self) -> None:
+        """Turn saving off when the folder is public or not allowed."""
+        if not self._snapshot_dir:
+            return
+        problem = await self.hass.async_add_executor_job(
+            snapshot_dir_error, self.hass, self._snapshot_dir
+        )
+        if problem:
             _LOGGER.warning(
                 "Not saving frames for %s to %s (%s); pick another folder in the options",
                 self.camera,
@@ -147,10 +161,6 @@ class PlateScanner:
                 problem,
             )
             self._snapshot_dir = ""
-
-        self.result = ScanResult(watchlist={p: False for p in self.watchlist})
-        self.usage: dict[str, Any] = {}
-        self._listeners: list[Callable[[], None]] = []
 
     @callback
     def add_listener(self, update: Callable[[], None]) -> CALLBACK_TYPE:
