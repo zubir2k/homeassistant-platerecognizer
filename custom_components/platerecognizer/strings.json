@@ -30,23 +30,36 @@
           "plate_in_vehicle_only": "Ignore plates that are not on a vehicle",
           "match_country_format": "Only accept plates in the hinted country formats",
           "vehicle_details": "Include make, model and colour (paid plans)",
-          "snapshot_dir": "Folder for saved frames (blank to turn off)",
+          "snapshot_dir": "Folder for saved frames, e.g. /media/platerecognizer (blank to turn off)",
           "snapshot_keep_history": "Keep a timestamped copy of every frame with a plate",
           "snapshot_every_scan": "Save the last frame even when no plate is found"
         }
       }
+    },
+    "error": {
+      "snapshot_dir_not_absolute": "Use a full path, such as /media/platerecognizer.",
+      "snapshot_dir_public": "Folders under /config/www are public at /local/ without login. Pick another folder, such as /media/platerecognizer.",
+      "snapshot_dir_not_allowed": "Home Assistant does not allow writing to this folder. Use a media folder or add it to allowlist_external_dirs."
     }
   },
   "entity": {
     "button": {
-      "scan": { "name": "Scan" }
+      "scan": {
+        "name": "Scan"
+      }
     },
     "image": {
-      "last_frame": { "name": "Last frame" }
+      "last_frame": {
+        "name": "Last frame"
+      }
     },
     "sensor": {
-      "last_plate": { "name": "Last plate" },
-      "remaining_calls": { "name": "Remaining calls" }
+      "last_plate": {
+        "name": "Last plate"
+      },
+      "remaining_calls": {
+        "name": "Remaining calls"
+      }
     }
   }
 }
