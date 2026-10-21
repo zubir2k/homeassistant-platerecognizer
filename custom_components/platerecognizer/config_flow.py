@@ -37,6 +37,7 @@ from .const import (
     OPT_VEHICLE_DETAILS,
     OPT_WATCHLIST,
 )
+from .scanner import snapshot_dir_error
 
 
 async def _check_connection(hass: HomeAssistant, data: dict[str, Any]) -> str | None:
@@ -104,8 +105,14 @@ class PlateRecognizerOptionsFlow(OptionsFlow):
     """Tune how scans are made and stored."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(data=user_input)
+            folder = str(user_input.get(OPT_SNAPSHOT_DIR) or "").strip()
+            user_input[OPT_SNAPSHOT_DIR] = folder
+            if error := snapshot_dir_error(self.hass, folder):
+                errors[OPT_SNAPSHOT_DIR] = error
+            else:
+                return self.async_create_entry(data=user_input)
 
         text = TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT))
         schema = vol.Schema(
@@ -120,10 +127,12 @@ class PlateRecognizerOptionsFlow(OptionsFlow):
                 vol.Optional(OPT_SNAPSHOT_EVERY_SCAN, default=False): BooleanSelector(),
             }
         )
-        current = {**self.config_entry.data, **self.config_entry.options}
+        current = {**self.config_entry.data, **self.config_entry.options, **(user_input or {})}
         for key in (OPT_COUNTRIES, OPT_WATCHLIST):
             if isinstance(current.get(key), list):
                 current[key] = ", ".join(current[key])
         return self.async_show_form(
-            step_id="init", data_schema=self.add_suggested_values_to_schema(schema, current)
+            step_id="init",
+            data_schema=self.add_suggested_values_to_schema(schema, current),
+            errors=errors,
         )
