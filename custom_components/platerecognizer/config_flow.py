@@ -109,7 +109,9 @@ class PlateRecognizerOptionsFlow(OptionsFlow):
         if user_input is not None:
             folder = str(user_input.get(OPT_SNAPSHOT_DIR) or "").strip()
             user_input[OPT_SNAPSHOT_DIR] = folder
-            if error := snapshot_dir_error(self.hass, folder):
+            if error := await self.hass.async_add_executor_job(
+                snapshot_dir_error, self.hass, folder
+            ):
                 errors[OPT_SNAPSHOT_DIR] = error
             else:
                 return self.async_create_entry(data=user_input)
