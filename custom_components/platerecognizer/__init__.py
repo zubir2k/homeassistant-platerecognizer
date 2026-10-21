@@ -34,6 +34,7 @@ type PlateRecognizerConfigEntry = ConfigEntry[PlateScanner]
 async def async_setup_entry(hass: HomeAssistant, entry: PlateRecognizerConfigEntry) -> bool:
     """Set up one camera from a config entry."""
     scanner = PlateScanner(hass, entry.entry_id, {**entry.data, **entry.options})
+    await scanner.async_check_snapshot_dir()
     await scanner.async_refresh_usage()
     entry.runtime_data = scanner
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
