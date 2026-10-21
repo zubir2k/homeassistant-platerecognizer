@@ -99,7 +99,7 @@ Click **Configure** on the integration to set:
 | Ignore plates not on a vehicle | Drop plates found outside a vehicle |
 | Only accept hinted country formats | Reject plates that don't fit the hinted countries |
 | Make, model and colour | Eligible paid plans only |
-| Snapshot folder | e.g. `/config/www/platerecognizer`; blank turns saving off |
+| Snapshot folder | e.g. `/media/platerecognizer`; blank turns saving off. Must be allowed by Home Assistant (media folders are by default). Folders under `/config/www` are refused because they are public at `/local/` without login; use the **Last frame** image entity to show the latest frame on a dashboard |
 | Keep history | Timestamped copy of every frame with a plate |
 | Save every scan | Update `<camera>_last.jpg` even when nothing is found |
 
