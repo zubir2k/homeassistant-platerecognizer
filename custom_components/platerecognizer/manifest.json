@@ -1,6 +1,7 @@
 {
   "domain": "platerecognizer",
   "name": "Plate Recognizer",
+  "categories": ["ai_voice.image_recognition"],
   "codeowners": [
     "@zubir2k"
   ],
