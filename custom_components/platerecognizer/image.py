@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Final
+
 from homeassistant.components.image import ImageEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -9,6 +11,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import PlateRecognizerConfigEntry
 from .entity import PlateRecognizerEntity
 from .scanner import PlateScanner
+
+PARALLEL_UPDATES: Final = 0
 
 
 async def async_setup_entry(

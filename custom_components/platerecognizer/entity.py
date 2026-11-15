@@ -26,7 +26,7 @@ class PlateRecognizerEntity(Entity):
             name=f"Plate Recognizer {camera_name}",
             manufacturer="Plate Recognizer",
             entry_type=DeviceEntryType.SERVICE,
-            configuration_url="https://app.platerecognizer.com/",
+            configuration_url=scanner._sdk_url if scanner.is_local else "https://app.platerecognizer.com/",
         )
 
     async def async_added_to_hass(self) -> None:

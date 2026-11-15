@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Final
 
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import PlateRecognizerConfigEntry
 from .entity import PlateRecognizerEntity
+
+PARALLEL_UPDATES: Final = 0
 
 
 async def async_setup_entry(
@@ -26,8 +29,6 @@ async def async_setup_entry(
 
 class LastPlateSensor(PlateRecognizerEntity, SensorEntity):
     """Best plate from the latest scan; every read is in the attributes."""
-
-    _attr_icon = "mdi:car-search"
 
     @property
     def native_value(self) -> str | None:
@@ -50,7 +51,7 @@ class LastPlateSensor(PlateRecognizerEntity, SensorEntity):
 class RemainingCallsSensor(PlateRecognizerEntity, SensorEntity):
     """Cloud API calls left this billing month."""
 
-    _attr_icon = "mdi:counter"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_native_unit_of_measurement = "calls"
     _attr_state_class = SensorStateClass.MEASUREMENT
 

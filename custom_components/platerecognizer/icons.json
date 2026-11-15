@@ -1,0 +1,22 @@
+{
+  "entity": {
+    "sensor": {
+      "last_plate": {
+        "default": "mdi:car-search"
+      },
+      "remaining_calls": {
+        "default": "mdi:counter"
+      }
+    },
+    "button": {
+      "scan": {
+        "default": "mdi:camera-iris"
+      }
+    },
+    "image": {
+      "last_frame": {
+        "default": "mdi:image-frame"
+      }
+    }
+  }
+}

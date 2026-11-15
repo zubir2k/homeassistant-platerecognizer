@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from typing import Final
+
 from homeassistant.components.button import ButtonEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import PlateRecognizerConfigEntry
 from .entity import PlateRecognizerEntity
+
+PARALLEL_UPDATES: Final = 1
 
 
 async def async_setup_entry(

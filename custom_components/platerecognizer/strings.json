@@ -10,6 +10,15 @@
           "use_local_sdk": "Use a local Plate Recognizer SDK",
           "sdk_url": "Local SDK address"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Plate Recognizer",
+        "description": "Update your API token or local SDK address.",
+        "data": {
+          "api_token": "API token",
+          "use_local_sdk": "Use a local Plate Recognizer SDK",
+          "sdk_url": "Local SDK address"
+        }
       }
     },
     "error": {
@@ -17,7 +26,8 @@
       "cannot_connect": "Could not reach Plate Recognizer. Check the token or SDK address."
     },
     "abort": {
-      "already_configured": "This camera is already set up."
+      "already_configured": "This camera is already set up.",
+      "reconfigure_successful": "Reconfiguration was successful."
     }
   },
   "options": {

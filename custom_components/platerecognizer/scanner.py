@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -145,6 +146,7 @@ class PlateScanner:
         self.result = ScanResult(watchlist={p: False for p in self.watchlist})
         self.usage: dict[str, Any] = {}
         self._listeners: list[Callable[[], None]] = []
+        self._scan_lock = asyncio.Lock()
 
     async def async_check_snapshot_dir(self) -> None:
         """Turn saving off when the folder is public or not allowed."""
@@ -189,76 +191,87 @@ class PlateScanner:
 
     async def async_scan(self) -> None:
         """Run one scan of the configured camera."""
-        try:
-            image = await async_get_image(self.hass, self.camera)
-        except HomeAssistantError as err:
-            raise HomeAssistantError(f"Cannot get a frame from {self.camera}: {err}") from err
-
-        form = aiohttp.FormData()
-        form.add_field("upload", image.content, filename="frame.jpg", content_type="image/jpeg")
-        form.add_field("camera_id", self.camera)
-        for country in self._countries:
-            form.add_field("regions", country)
-        if self._vehicle_details:
-            form.add_field("mmc", "true")
-        engine: dict[str, str] = {}
-        if self._vehicle_only:
-            engine["detection_rule"] = "strict"
-        if self._country_format:
-            engine["region"] = "strict"
-        if engine:
-            form.add_field("config", json.dumps(engine))
-
-        url = f"{self._sdk_url}/v1/plate-reader/" if self._local else CLOUD_READ_URL
-        session = async_get_clientsession(self.hass)
-        try:
-            async with session.post(
-                url, headers=self._headers, data=form, timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-                if resp.status not in (200, 201):
-                    raise HomeAssistantError(
-                        f"Plate Recognizer returned HTTP {resp.status}: {await resp.text()}"
-                    )
-                body = await resp.json()
-        except (aiohttp.ClientError, TimeoutError) as err:
-            raise HomeAssistantError(f"Cannot reach Plate Recognizer: {err!r}") from err
-
-        reads = [self._to_read(item) for item in body.get("results", [])]
-        seen = [read["plate"] for read in reads]
-        watch = {wanted: any(near_match(wanted, plate) for plate in seen) for wanted in self.watchlist}
-
-        frame = await self.hass.async_add_executor_job(draw_reads, image.content, reads)
-        self.result = ScanResult(reads=reads, watchlist=watch, scanned_at=dt_util.utcnow(), frame=frame)
-
-        for read in reads:
-            self.hass.bus.async_fire(
-                EVENT_PLATE_READ,
-                {
-                    "config_entry_id": self.entry_id,
-                    "camera": self.camera,
-                    "on_watchlist": any(near_match(w, read["plate"]) for w in self.watchlist),
-                    **read,
-                },
+        if self._scan_lock.locked():
+            _LOGGER.warning(
+                "Scan already in progress for %s, skipping duplicate request", self.camera
             )
+            return
 
-        if self._snapshot_dir and (reads or self._every_scan):
+        async with self._scan_lock:
             try:
-                await self.hass.async_add_executor_job(
-                    self._write_snapshot, image.content, bool(reads)
-                )
-            except OSError as err:
-                _LOGGER.error("Could not save snapshot to %s: %s", self._snapshot_dir, err)
+                image = await async_get_image(self.hass, self.camera)
+            except HomeAssistantError as err:
+                raise HomeAssistantError(f"Cannot get a frame from {self.camera}: {err}") from err
 
-        await self.async_refresh_usage()
-        self._notify()
+            form = aiohttp.FormData()
+            form.add_field("upload", image.content, filename="frame.jpg", content_type="image/jpeg")
+            form.add_field("camera_id", self.camera)
+            for country in self._countries:
+                form.add_field("regions", country)
+            if self._vehicle_details:
+                form.add_field("mmc", "true")
+            engine: dict[str, str] = {}
+            if self._vehicle_only:
+                engine["detection_rule"] = "strict"
+            if self._country_format:
+                engine["region"] = "strict"
+            if engine:
+                form.add_field("config", json.dumps(engine))
+
+            url = f"{self._sdk_url}/v1/plate-reader/" if self._local else CLOUD_READ_URL
+            session = async_get_clientsession(self.hass)
+            try:
+                async with session.post(
+                    url, headers=self._headers, data=form, timeout=aiohttp.ClientTimeout(total=30)
+                ) as resp:
+                    if resp.status not in (200, 201):
+                        err_text = await resp.text()
+                        if len(err_text) > 200:
+                            err_text = err_text[:200] + "..."
+                        raise HomeAssistantError(
+                            f"Plate Recognizer returned HTTP {resp.status}: {err_text}"
+                        )
+                    body = await resp.json()
+            except (aiohttp.ClientError, TimeoutError) as err:
+                raise HomeAssistantError(f"Cannot reach Plate Recognizer: {err!r}") from err
+
+            reads = [self._to_read(item) for item in body.get("results", [])]
+            seen = [read["plate"] for read in reads]
+            watch = {wanted: any(near_match(wanted, plate) for plate in seen) for wanted in self.watchlist}
+
+            frame = await self.hass.async_add_executor_job(draw_reads, image.content, reads)
+            self.result = ScanResult(reads=reads, watchlist=watch, scanned_at=dt_util.utcnow(), frame=frame)
+
+            for read in reads:
+                self.hass.bus.async_fire(
+                    EVENT_PLATE_READ,
+                    {
+                        "config_entry_id": self.entry_id,
+                        "camera": self.camera,
+                        "on_watchlist": any(near_match(w, read["plate"]) for w in self.watchlist),
+                        **read,
+                    },
+                )
+
+            if self._snapshot_dir and (reads or self._every_scan):
+                try:
+                    await self.hass.async_add_executor_job(
+                        self._write_snapshot, image.content, bool(reads)
+                    )
+                except OSError as err:
+                    _LOGGER.error("Could not save snapshot to %s: %s", self._snapshot_dir, err)
+
+            await self.async_refresh_usage()
+            self._notify()
 
     def _to_read(self, item: dict[str, Any]) -> dict[str, Any]:
         """Flatten one API result into what the entities and event expose."""
         best = max(item.get("candidates") or [item], key=lambda c: c.get("score", 0))
         vehicle = item.get("vehicle") or {}
+        score_val = best.get("score") if best.get("score") is not None else item.get("score", 0.0)
         read: dict[str, Any] = {
             "plate": str(best.get("plate", item.get("plate", ""))).upper(),
-            "score": round(float(best.get("score", item.get("score", 0.0))), 3),
+            "score": round(float(score_val or 0.0), 3),
             "country": (item.get("region") or {}).get("code"),
             "vehicle": vehicle.get("type"),
             "box": {k: (item.get("box") or {}).get(k, 0) for k in ("xmin", "ymin", "xmax", "ymax")},
@@ -289,12 +302,12 @@ class PlateScanner:
         except (aiohttp.ClientError, TimeoutError) as err:
             _LOGGER.debug("Usage lookup failed: %r", err)
             return
-        allowance = body.get("total_calls", 0)
-        used = (body.get("usage") or {}).get("calls", 0)
+        allowance = body.get("total_calls") or 0
+        used = (body.get("usage") or {}).get("calls") or 0
         self.usage = {
             "allowance": allowance,
             "used": used,
-            "remaining": allowance - used,
+            "remaining": (allowance - used) if allowance else None,
             "resets_on": body.get("resets_on"),
         }
 
