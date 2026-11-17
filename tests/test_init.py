@@ -1,4 +1,5 @@
 """Test init and entry lifecycle for Plate Recognizer."""
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -12,7 +13,7 @@ async def test_setup_and_unload_entry(hass: HomeAssistant, mock_config_entry: Mo
     assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
     await hass.async_block_till_done()
 
-    assert mock_config_entry.state.loaded
+    assert mock_config_entry.state == ConfigEntryState.LOADED
 
     # Verify entities registered
     remaining_sensors = [s for s in hass.states.async_entity_ids("sensor") if "remaining_calls" in s]
@@ -33,4 +34,4 @@ async def test_setup_and_unload_entry(hass: HomeAssistant, mock_config_entry: Mo
     assert await hass.config_entries.async_unload(mock_config_entry.entry_id)
     await hass.async_block_till_done()
 
-    assert not mock_config_entry.state.loaded
+    assert mock_config_entry.state == ConfigEntryState.NOT_LOADED
