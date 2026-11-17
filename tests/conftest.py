@@ -1,6 +1,16 @@
 """Fixtures for Plate Recognizer tests."""
 from __future__ import annotations
 
+try:
+    import pycares
+
+    if hasattr(pycares, "_shutdown_manager"):
+        pycares._shutdown_manager.start()
+    else:
+        pycares.Channel()
+except Exception:
+    pass
+
 import sys
 from unittest.mock import patch
 import pytest
