@@ -7,7 +7,7 @@ from typing import Any, Final
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import PlateRecognizerConfigEntry
 from .entity import PlateRecognizerEntity
@@ -18,7 +18,7 @@ PARALLEL_UPDATES: Final = 0
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: PlateRecognizerConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     scanner = entry.runtime_data
     entities: list[SensorEntity] = [LastPlateSensor(scanner, "last_plate")]

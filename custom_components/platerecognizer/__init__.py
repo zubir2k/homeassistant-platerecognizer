@@ -7,7 +7,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import config_validation as cv, entity_registry as er
 
 from .const import (
     DOMAIN,
@@ -29,6 +29,9 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS: list[Platform] = [Platform.BUTTON, Platform.IMAGE, Platform.SENSOR]
 
 type PlateRecognizerConfigEntry = ConfigEntry[PlateScanner]
+
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: PlateRecognizerConfigEntry) -> bool:
