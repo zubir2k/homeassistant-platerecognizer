@@ -1,7 +1,6 @@
 {
   "name": "PlateRecognizer",
   "homeassistant": "2024.11.0",
-  "country": [],
   "zip_release": true,
   "filename": "platerecognizer.zip"
 }
