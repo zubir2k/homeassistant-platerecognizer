@@ -56,18 +56,19 @@ watchlist:
 ---
 
 ## Installation
-
+#### With Marketplace/HACS
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=zubir2k&repository=homeassistant-platerecognizer&category=integration)
 
-### Via HACS (recommended)
+> [!Tip]
+> If you are unable to use the button above, manually search for Plate Recognizer in Marketplace/HACS.
 
-1. In HACS → **Custom Repositories** → add `https://github.com/zubir2k/homeassistant-platerecognizer` (category: **Integration**)
-2. Install **Plate Recognizer** from the HACS list
-3. Restart Home Assistant
+#### Manual
+1. Copy the `platerecognizer` directory from `custom_components` in this repository and place inside your Home Assistant's `custom_components` directory.
+2. Restart Home Assistant
+3. Follow the instructions in the `Setup` section
 
-### Manual
-
-Copy `custom_components/platerecognizer/` into your HA `config/custom_components/` folder and restart.
+> [!WARNING]
+> If installing manually, in order to be alerted about new releases, you will need to subscribe to releases from this repository.
 
 ---
 
