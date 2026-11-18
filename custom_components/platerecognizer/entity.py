@@ -29,6 +29,14 @@ class PlateRecognizerEntity(Entity):
             configuration_url=scanner._sdk_url if scanner.is_local else "https://app.platerecognizer.com/",
         )
 
+    @property
+    def available(self) -> bool:
+        """Return True if the underlying camera is available."""
+        if not super().available:
+            return False
+        camera_state = self.scanner.hass.states.get(self.scanner.camera)
+        return camera_state is None or camera_state.state != "unavailable"
+
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         self.async_on_remove(self.scanner.add_listener(self._handle_scan))

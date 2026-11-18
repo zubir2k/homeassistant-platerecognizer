@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import aiohttp
@@ -134,6 +135,51 @@ class PlateRecognizerConfigFlow(ConfigFlow, domain=DOMAIN):
         )
         return self.async_show_form(
             step_id="reconfigure",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"dashboard_url": CLOUD_DASHBOARD_URL},
+        )
+
+    async def async_step_reauth(
+        self, entry_data: Mapping[str, Any]
+    ) -> ConfigFlowResult:
+        """Handle reauthorization upon invalid authentication."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Confirm reauth with a new token or local SDK address."""
+        entry = self._get_reauth_entry()
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            if user_input.get(OPT_TOKEN):
+                user_input[OPT_TOKEN] = user_input[OPT_TOKEN].strip()
+            if user_input.get(OPT_SDK_URL):
+                user_input[OPT_SDK_URL] = user_input[OPT_SDK_URL].strip()
+
+            combined = {**entry.data, **user_input}
+            if (error := await _check_connection(self.hass, combined)) is None:
+                return self.async_update_reload_and_abort(
+                    entry,
+                    data_updates=user_input,
+                )
+            errors["base"] = error
+
+        schema = vol.Schema(
+            {
+                vol.Required(OPT_TOKEN, default=entry.data.get(OPT_TOKEN, "")): TextSelector(
+                    TextSelectorConfig(type=TextSelectorType.PASSWORD)
+                ),
+                vol.Optional(OPT_LOCAL_SDK, default=entry.data.get(OPT_LOCAL_SDK, False)): BooleanSelector(),
+                vol.Optional(OPT_SDK_URL, default=entry.data.get(OPT_SDK_URL, DEFAULT_SDK_URL)): TextSelector(
+                    TextSelectorConfig(type=TextSelectorType.URL)
+                ),
+            }
+        )
+        return self.async_show_form(
+            step_id="reauth_confirm",
             data_schema=schema,
             errors=errors,
             description_placeholders={"dashboard_url": CLOUD_DASHBOARD_URL},

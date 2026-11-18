@@ -86,3 +86,24 @@ async def test_flow_cannot_connect(hass: HomeAssistant, aioclient_mock) -> None:
     )
     assert result2["type"] is FlowResultType.FORM
     assert result2["errors"] == {"base": "cannot_connect"}
+
+
+async def test_reauth_flow(hass: HomeAssistant, mock_config_entry, aioclient_mock) -> None:
+    """Test reauthentication flow updates token."""
+    mock_config_entry.add_to_hass(hass)
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(CLOUD_USAGE_URL, status=200)
+
+    result = await mock_config_entry.start_reauth_flow(hass)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth_confirm"
+
+    result2 = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            OPT_TOKEN: "new_valid_token",
+        },
+    )
+    assert result2["type"] is FlowResultType.ABORT
+    assert result2["reason"] == "reauth_successful"
+    assert mock_config_entry.data[OPT_TOKEN] == "new_valid_token"

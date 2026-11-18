@@ -19,6 +19,15 @@
           "use_local_sdk": "Use a local Plate Recognizer SDK",
           "sdk_url": "Local SDK address"
         }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate with Plate Recognizer",
+        "description": "Your API token is no longer valid. Enter a new API token from {dashboard_url}.",
+        "data": {
+          "api_token": "API token",
+          "use_local_sdk": "Use a local Plate Recognizer SDK",
+          "sdk_url": "Local SDK address"
+        }
       }
     },
     "error": {
@@ -27,7 +36,8 @@
     },
     "abort": {
       "already_configured": "This camera is already set up.",
-      "reconfigure_successful": "Reconfiguration was successful."
+      "reconfigure_successful": "Reconfiguration was successful.",
+      "reauth_successful": "Re-authentication was successful."
     }
   },
   "options": {

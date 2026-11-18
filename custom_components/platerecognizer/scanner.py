@@ -16,7 +16,7 @@ import aiohttp
 
 from homeassistant.components.camera import async_get_image
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
@@ -224,6 +224,10 @@ class PlateScanner:
                 async with session.post(
                     url, headers=self._headers, data=form, timeout=aiohttp.ClientTimeout(total=30)
                 ) as resp:
+                    if resp.status in (401, 403):
+                        if entry := self.hass.config_entries.async_get_entry(self.entry_id):
+                            entry.async_start_reauth(self.hass)
+                        raise ConfigEntryAuthFailed("Invalid API token for Plate Recognizer")
                     if resp.status not in (200, 201):
                         err_text = await resp.text()
                         if len(err_text) > 200:
@@ -296,6 +300,10 @@ class PlateScanner:
             async with session.get(
                 CLOUD_USAGE_URL, headers=self._headers, timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
+                if resp.status in (401, 403):
+                    if entry := self.hass.config_entries.async_get_entry(self.entry_id):
+                        entry.async_start_reauth(self.hass)
+                    return
                 if resp.status != 200:
                     return
                 body = await resp.json()
