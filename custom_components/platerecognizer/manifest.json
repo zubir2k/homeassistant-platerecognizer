@@ -1,7 +1,9 @@
 {
   "domain": "platerecognizer",
   "name": "Plate Recognizer",
-  "categories": ["ai_voice.image_recognition"],
+  "categories": [
+    "ai_voice.image_recognition"
+  ],
   "codeowners": [
     "@zubir2k"
   ],
@@ -14,5 +16,6 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/zubir2k/homeassistant-platerecognizer/issues",
   "requirements": [],
-  "version": "3.0.5"
+  "version": "3.0.6",
+  "quality_scale": "bronze"
 }
