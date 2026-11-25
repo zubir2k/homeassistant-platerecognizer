@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-import aiohttp
+from platerecognizer import (
+    PlateRecognizerAuthError,
+    PlateRecognizerClient,
+    PlateRecognizerError,
+)
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
@@ -22,7 +26,6 @@ from homeassistant.helpers.selector import (
 
 from .const import (
     CLOUD_DASHBOARD_URL,
-    CLOUD_USAGE_URL,
     DEFAULT_SDK_URL,
     DOMAIN,
     OPT_CAMERA,
@@ -43,22 +46,19 @@ from .scanner import snapshot_dir_error
 
 async def _check_connection(hass: HomeAssistant, data: dict[str, Any]) -> str | None:
     """Return an error key, or None when the token / SDK answers."""
-    if data.get(OPT_LOCAL_SDK):
-        url = f"{str(data.get(OPT_SDK_URL) or DEFAULT_SDK_URL).rstrip('/')}/info/"
-        headers: dict[str, str] = {}
-    else:
-        url = CLOUD_USAGE_URL
-        headers = {"Authorization": f"Token {data.get(OPT_TOKEN, '')}"}
-    session = async_get_clientsession(hass)
+    client = PlateRecognizerClient(
+        api_token=str(data.get(OPT_TOKEN, "")),
+        local_sdk=bool(data.get(OPT_LOCAL_SDK, False)),
+        sdk_url=str(data.get(OPT_SDK_URL) or DEFAULT_SDK_URL),
+        session=async_get_clientsession(hass),
+    )
     try:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-            if resp.status == 200:
-                return None
-            if resp.status in (401, 403):
-                return "invalid_auth"
-            return "cannot_connect"
-    except (aiohttp.ClientError, TimeoutError):
+        await client.async_check_connection()
+    except PlateRecognizerAuthError:
+        return "invalid_auth"
+    except PlateRecognizerError:
         return "cannot_connect"
+    return None
 
 
 class PlateRecognizerConfigFlow(ConfigFlow, domain=DOMAIN):

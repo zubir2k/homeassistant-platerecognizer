@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from platerecognizer import DEFAULT_SDK_URL
+
 DOMAIN = "platerecognizer"
 
-CLOUD_READ_URL = "https://api.platerecognizer.com/v1/plate-reader/"
-CLOUD_USAGE_URL = "https://api.platerecognizer.com/v1/statistics/"
 CLOUD_DASHBOARD_URL = "https://app.platerecognizer.com/service/snapshot-cloud/"
 
 # Setup (config entry data)
@@ -23,8 +23,6 @@ OPT_VEHICLE_DETAILS = "vehicle_details"
 OPT_SNAPSHOT_DIR = "snapshot_dir"
 OPT_SNAPSHOT_KEEP_HISTORY = "snapshot_keep_history"
 OPT_SNAPSHOT_EVERY_SCAN = "snapshot_every_scan"
-
-DEFAULT_SDK_URL = "http://localhost:8080"
 
 # Fired once per plate found in a scan
 EVENT_PLATE_READ = "platerecognizer_plate_read"

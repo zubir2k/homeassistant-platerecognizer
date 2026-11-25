@@ -15,7 +15,12 @@
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/zubir2k/homeassistant-platerecognizer/issues",
+  "loggers": [
+    "platerecognizer"
+  ],
   "quality_scale": "silver",
-  "requirements": [],
+  "requirements": [
+    "python-platerecognizer==0.1.0"
+  ],
   "version": "3.0.7"
 }

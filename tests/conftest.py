@@ -17,9 +17,9 @@ import pytest
 from homeassistant.config_entries import ConfigEntryState
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from platerecognizer import CLOUD_READ_URL, CLOUD_USAGE_URL
+
 from custom_components.platerecognizer.const import (
-    CLOUD_READ_URL,
-    CLOUD_USAGE_URL,
     DOMAIN,
     OPT_CAMERA,
     OPT_TOKEN,

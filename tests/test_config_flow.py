@@ -3,8 +3,9 @@ from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
+from platerecognizer import CLOUD_USAGE_URL
+
 from custom_components.platerecognizer.const import (
-    CLOUD_USAGE_URL,
     DOMAIN,
     OPT_CAMERA,
     OPT_TOKEN,

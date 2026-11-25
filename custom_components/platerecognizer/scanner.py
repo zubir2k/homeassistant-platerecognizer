@@ -7,12 +7,15 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 import io
-import json
 import logging
 from pathlib import Path
 from typing import Any
 
-import aiohttp
+from platerecognizer import (
+    PlateRecognizerAuthError,
+    PlateRecognizerClient,
+    PlateRecognizerError,
+)
 
 from homeassistant.components.camera import async_get_image
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
@@ -21,8 +24,6 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    CLOUD_READ_URL,
-    CLOUD_USAGE_URL,
     DEFAULT_SDK_URL,
     EVENT_PLATE_READ,
     OPT_CAMERA,
@@ -134,6 +135,12 @@ class PlateScanner:
         self._token: str = settings.get(OPT_TOKEN, "")
         self._local: bool = settings.get(OPT_LOCAL_SDK, False)
         self._sdk_url: str = str(settings.get(OPT_SDK_URL) or DEFAULT_SDK_URL).rstrip("/")
+        self._client = PlateRecognizerClient(
+            api_token=self._token,
+            local_sdk=self._local,
+            sdk_url=self._sdk_url,
+            session=async_get_clientsession(hass),
+        )
         self._countries = [c.lower() for c in split_csv(settings.get(OPT_COUNTRIES))]
         self.watchlist = split_csv(settings.get(OPT_WATCHLIST))
         self._vehicle_only: bool = settings.get(OPT_PLATE_IN_VEHICLE_ONLY, False)
@@ -185,10 +192,6 @@ class PlateScanner:
         """True when talking to a self-hosted SDK instead of the cloud."""
         return self._local
 
-    @property
-    def _headers(self) -> dict[str, str]:
-        return {} if self._local else {"Authorization": f"Token {self._token}"}
-
     async def async_scan(self) -> None:
         """Run one scan of the configured camera."""
         if self._scan_lock.locked():
@@ -203,43 +206,26 @@ class PlateScanner:
             except HomeAssistantError as err:
                 raise HomeAssistantError(f"Cannot get a frame from {self.camera}: {err}") from err
 
-            form = aiohttp.FormData()
-            form.add_field("upload", image.content, filename="frame.jpg", content_type="image/jpeg")
-            form.add_field("camera_id", self.camera)
-            for country in self._countries:
-                form.add_field("regions", country)
-            if self._vehicle_details:
-                form.add_field("mmc", "true")
-            engine: dict[str, str] = {}
-            if self._vehicle_only:
-                engine["detection_rule"] = "strict"
-            if self._country_format:
-                engine["region"] = "strict"
-            if engine:
-                form.add_field("config", json.dumps(engine))
-
-            url = f"{self._sdk_url}/v1/plate-reader/" if self._local else CLOUD_READ_URL
-            session = async_get_clientsession(self.hass)
             try:
-                async with session.post(
-                    url, headers=self._headers, data=form, timeout=aiohttp.ClientTimeout(total=30)
-                ) as resp:
-                    if resp.status in (401, 403):
-                        if entry := self.hass.config_entries.async_get_entry(self.entry_id):
-                            entry.async_start_reauth(self.hass)
-                        raise ConfigEntryAuthFailed("Invalid API token for Plate Recognizer")
-                    if resp.status not in (200, 201):
-                        err_text = await resp.text()
-                        if len(err_text) > 200:
-                            err_text = err_text[:200] + "..."
-                        raise HomeAssistantError(
-                            f"Plate Recognizer returned HTTP {resp.status}: {err_text}"
-                        )
-                    body = await resp.json()
-            except (aiohttp.ClientError, TimeoutError) as err:
-                raise HomeAssistantError(f"Cannot reach Plate Recognizer: {err!r}") from err
+                plate_reads = await self._client.async_read_plate(
+                    image.content,
+                    camera_id=self.camera,
+                    regions=self._countries,
+                    vehicle_details=self._vehicle_details,
+                    plate_in_vehicle_only=self._vehicle_only,
+                    match_country_format=self._country_format,
+                )
+            except PlateRecognizerAuthError as err:
+                if entry := self.hass.config_entries.async_get_entry(self.entry_id):
+                    entry.async_start_reauth(self.hass)
+                raise ConfigEntryAuthFailed("Invalid API token for Plate Recognizer") from err
+            except PlateRecognizerError as err:
+                raise HomeAssistantError(str(err)) from err
 
-            reads = [self._to_read(item) for item in body.get("results", [])]
+            reads = [
+                read.to_dict(include_vehicle_details=self._vehicle_details)
+                for read in plate_reads
+            ]
             seen = [read["plate"] for read in reads]
             watch = {wanted: any(near_match(wanted, plate) for plate in seen) for wanted in self.watchlist}
 
@@ -268,56 +254,21 @@ class PlateScanner:
             await self.async_refresh_usage()
             self._notify()
 
-    def _to_read(self, item: dict[str, Any]) -> dict[str, Any]:
-        """Flatten one API result into what the entities and event expose."""
-        best = max(item.get("candidates") or [item], key=lambda c: c.get("score", 0))
-        vehicle = item.get("vehicle") or {}
-        score_val = best.get("score") if best.get("score") is not None else item.get("score", 0.0)
-        read: dict[str, Any] = {
-            "plate": str(best.get("plate", item.get("plate", ""))).upper(),
-            "score": round(float(score_val or 0.0), 3),
-            "country": (item.get("region") or {}).get("code"),
-            "vehicle": vehicle.get("type"),
-            "box": {k: (item.get("box") or {}).get(k, 0) for k in ("xmin", "ymin", "xmax", "ymax")},
-        }
-        if self._vehicle_details:
-            def first(key: str) -> dict[str, Any]:
-                values = item.get(key) or []
-                return values[0] if values else {}
-
-            read["make"] = first("model_make").get("make")
-            read["model"] = first("model_make").get("model")
-            read["color"] = first("color").get("color")
-            read["orientation"] = first("orientation").get("orientation")
-        return read
-
     async def async_refresh_usage(self) -> None:
         """Read the cloud account usage (not available for the local SDK)."""
         if self._local:
             return
-        session = async_get_clientsession(self.hass)
         try:
-            async with session.get(
-                CLOUD_USAGE_URL, headers=self._headers, timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                if resp.status in (401, 403):
-                    if entry := self.hass.config_entries.async_get_entry(self.entry_id):
-                        entry.async_start_reauth(self.hass)
-                    return
-                if resp.status != 200:
-                    return
-                body = await resp.json()
-        except (aiohttp.ClientError, TimeoutError) as err:
+            usage = await self._client.async_get_usage()
+        except PlateRecognizerAuthError:
+            if entry := self.hass.config_entries.async_get_entry(self.entry_id):
+                entry.async_start_reauth(self.hass)
+            return
+        except PlateRecognizerError as err:
             _LOGGER.debug("Usage lookup failed: %r", err)
             return
-        allowance = body.get("total_calls") or 0
-        used = (body.get("usage") or {}).get("calls") or 0
-        self.usage = {
-            "allowance": allowance,
-            "used": used,
-            "remaining": (allowance - used) if allowance else None,
-            "resets_on": body.get("resets_on"),
-        }
+        if usage is not None:
+            self.usage = usage.to_dict()
 
     def _write_snapshot(self, frame: bytes, found: bool) -> None:
         folder = Path(self._snapshot_dir)
