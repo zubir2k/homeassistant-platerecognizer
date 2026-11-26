@@ -56,7 +56,7 @@ def near_match(wanted: str, seen: str) -> bool:
         return True
     if abs(len(wanted) - len(seen)) > WATCHLIST_TOLERANCE:
         return False
-    misses = sum(a != b for a, b in zip(wanted, seen)) + abs(len(wanted) - len(seen))
+    misses = sum(a != b for a, b in zip(wanted, seen, strict=False)) + abs(len(wanted) - len(seen))
     return misses <= WATCHLIST_TOLERANCE
 
 

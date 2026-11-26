@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from platerecognizer import DEFAULT_SDK_URL
 
 DOMAIN = "platerecognizer"
 
